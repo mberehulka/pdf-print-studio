@@ -1,0 +1,10 @@
+C:\Users\muriel\Documents\pdf-print-studio\target\debug\deps\crc32fast-66dc31a0cdd95d01.d: C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.3\src\lib.rs C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.3\src\baseline.rs C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.3\src\combine.rs C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.3\src\specialized\mod.rs C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.3\src\table.rs C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.3\src\specialized\pclmulqdq.rs
+
+C:\Users\muriel\Documents\pdf-print-studio\target\debug\deps\libcrc32fast-66dc31a0cdd95d01.rmeta: C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.3\src\lib.rs C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.3\src\baseline.rs C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.3\src\combine.rs C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.3\src\specialized\mod.rs C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.3\src\table.rs C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.3\src\specialized\pclmulqdq.rs
+
+C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.3\src\lib.rs:
+C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.3\src\baseline.rs:
+C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.3\src\combine.rs:
+C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.3\src\specialized\mod.rs:
+C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.3\src\table.rs:
+C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\crc32fast-1.5.3\src\specialized\pclmulqdq.rs:

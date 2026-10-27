@@ -1,0 +1,14 @@
+C:\Users\muriel\Documents\pdf-print-studio\target\release\deps\serde-2c971e6439fee025.d: C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\lib.rs C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\integer128.rs C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\mod.rs C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\de.rs C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\ser.rs C:\Users\muriel\Documents\pdf-print-studio\target\release\build\serde-ac53f2ff9f17280e\out/private.rs
+
+C:\Users\muriel\Documents\pdf-print-studio\target\release\deps\libserde-2c971e6439fee025.rlib: C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\lib.rs C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\integer128.rs C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\mod.rs C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\de.rs C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\ser.rs C:\Users\muriel\Documents\pdf-print-studio\target\release\build\serde-ac53f2ff9f17280e\out/private.rs
+
+C:\Users\muriel\Documents\pdf-print-studio\target\release\deps\libserde-2c971e6439fee025.rmeta: C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\lib.rs C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\integer128.rs C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\mod.rs C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\de.rs C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\ser.rs C:\Users\muriel\Documents\pdf-print-studio\target\release\build\serde-ac53f2ff9f17280e\out/private.rs
+
+C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\lib.rs:
+C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\integer128.rs:
+C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\mod.rs:
+C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\de.rs:
+C:\Users\muriel\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\ser.rs:
+C:\Users\muriel\Documents\pdf-print-studio\target\release\build\serde-ac53f2ff9f17280e\out/private.rs:
+
+# env-dep:OUT_DIR=C:\\Users\\muriel\\Documents\\pdf-print-studio\\target\\release\\build\\serde-ac53f2ff9f17280e\\out
