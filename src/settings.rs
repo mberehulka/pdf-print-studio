@@ -413,6 +413,105 @@ impl EpubOptions {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub enum ImageSort {
+    /// By file name, "2" before "10".
+    Name,
+    /// By the date the photo was taken (EXIF), else when the file was changed.
+    Taken,
+    Modified,
+    /// In the order the files were chosen.
+    AsGiven,
+}
+
+/// Size each picture is printed at; the sizes are portrait and turn with the picture.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub enum PhotoSize {
+    /// The picture's own size: pixels ÷ resolution.
+    Original,
+    Passport,
+    UsPassport,
+    Id3x4,
+    Wallet,
+    P9x13,
+    P10x15,
+    P13x18,
+    P15x21,
+    P20x25,
+    P20x30,
+    Square10,
+    A6,
+    A5,
+    A4,
+    Custom,
+}
+
+/// How a picture goes into a photo size of another shape.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub enum PhotoFit {
+    /// Cover the whole photo, cutting off what sticks out.
+    Fill,
+    /// Show the whole picture, with bands of the background colour.
+    Fit,
+}
+
+/// Picture options: which files, in what order, at what size.
+#[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
+#[serde(default)]
+pub struct ImageOptions {
+    pub sort: ImageSort,
+    pub reverse: bool,
+    pub size: PhotoSize,
+    pub custom_mm: [f32; 2],
+    pub fit: PhotoFit,
+    /// 9-point anchor of the part kept by `Fill`, 4 = centre.
+    pub anchor: u8,
+    /// Turn the photo size to landscape for landscape pictures.
+    pub match_orientation: bool,
+    /// Resolution for the picture's own size.
+    pub dpi: f32,
+    /// Prefer the resolution stored in the file.
+    pub use_file_dpi: bool,
+    /// Turn photos upright as the camera recorded (EXIF orientation).
+    pub exif_rotate: bool,
+    /// Convert embedded colour profiles (Adobe RGB, CMYK…) to sRGB.
+    pub color_manage: bool,
+    /// Behind transparent parts and around fitted pictures.
+    pub background: [u8; 3],
+    /// Stretch each picture's tones to the full range.
+    pub auto_levels: bool,
+    /// Every page of a multi-page TIFF and every frame of an animated GIF.
+    pub all_frames: bool,
+}
+
+impl Default for ImageOptions {
+    fn default() -> Self {
+        Self {
+            sort: ImageSort::Name,
+            reverse: false,
+            size: PhotoSize::Original,
+            custom_mm: [100.0, 150.0],
+            fit: PhotoFit::Fill,
+            anchor: 4,
+            match_orientation: true,
+            dpi: 300.0,
+            use_file_dpi: true,
+            exif_rotate: true,
+            color_manage: true,
+            background: [255, 255, 255],
+            auto_levels: false,
+            all_frames: true,
+        }
+    }
+}
+
+impl ImageOptions {
+    /// Every picture option changes the pages, so any change means reopening.
+    pub fn load_key(&self) -> String {
+        serde_json::to_string(self).unwrap_or_default()
+    }
+}
+
 #[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
 #[serde(default)]
 pub struct Settings {
@@ -507,6 +606,8 @@ pub struct Settings {
     pub cbz: CbzOptions,
     // ---- e-books
     pub epub: EpubOptions,
+    // ---- pictures
+    pub image: ImageOptions,
 }
 
 impl Default for Settings {
@@ -601,6 +702,7 @@ impl Default for Settings {
 
             cbz: CbzOptions::default(),
             epub: EpubOptions::default(),
+            image: ImageOptions::default(),
         }
     }
 }

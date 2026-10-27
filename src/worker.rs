@@ -5,7 +5,7 @@ use crate::compose::{self, PageRenderer, StampCtx};
 use crate::layout::Sheet;
 use crate::doc::{Doc, DocKind};
 use crate::pdf::{self, OpenError};
-use crate::settings::{CbzOptions, EpubOptions, Settings};
+use crate::settings::{CbzOptions, EpubOptions, ImageOptions, Settings};
 use crate::text::FontCache;
 use image::{Rgba, RgbImage, RgbaImage};
 use std::collections::{HashMap, VecDeque};
@@ -157,12 +157,17 @@ pub struct DocInfo {
     pub path: PathBuf,
     pub sizes_mm: Vec<(f32, f32)>,
     pub kind: DocKind,
-    /// Comic book / e-book metadata.
+    /// Comic book / e-book / photo metadata.
     pub meta: Vec<(String, String)>,
+    /// Per page: picture file name and date (pictures only).
+    pub labels: Vec<(String, String)>,
+    /// Per page: pixels of the picture on it (pictures only).
+    pub px: Vec<(u32, u32)>,
 }
 
 pub enum Req {
-    Open { path: PathBuf, password: Option<String>, cbz: CbzOptions, epub: Box<EpubOptions> },
+    /// `more`: further pictures opened together with `path`.
+    Open { path: PathBuf, more: Vec<PathBuf>, password: Option<String>, cbz: CbzOptions, epub: Box<EpubOptions>, image: Box<ImageOptions> },
     /// Thumbnails and viewer bitmaps are whole PDF pages (`page` = PDF page index).
     Thumb { page: usize, width: u32 },
     View { page: usize, width: u32 },
@@ -220,15 +225,16 @@ fn run(rx: Receiver<Req>, tx: Sender<Resp>, ctx: eframe::egui::Context) {
         let mut last_view = None;
         for r in pending {
             match r {
-                Req::Open { path, password, cbz, epub } => {
+                Req::Open { path, more, password, cbz, epub, image } => {
                     thumbs.clear();
                     last_sheet = None;
                     last_view = None;
-                    match Doc::open(&path, password.as_deref(), &cbz, &epub) {
+                    match Doc::open(&path, &more, password.as_deref(), &cbz, &epub, &image) {
                         Ok(d) => {
-                            let (kind, meta) = (d.kind(), d.meta());
+                            let (kind, meta, labels) = (d.kind(), d.meta(), d.page_labels());
+                            let px = d.page_px();
                             let rdr = Renderer::new(d, true);
-                            send(Resp::Opened(DocInfo { path, sizes_mm: rdr.sizes_mm().to_vec(), kind, meta }));
+                            send(Resp::Opened(DocInfo { path, sizes_mm: rdr.sizes_mm().to_vec(), kind, meta, labels, px }));
                             doc = Some(rdr);
                         }
                         Err(OpenError::NeedPassword) => {

@@ -5,7 +5,7 @@
 <h1 align="center">PDF Print Studio</h1>
 
 <p align="center">
-  Print PDFs, comic books and e-books exactly the way you want, on Windows.
+  Print PDFs, comic books, e-books and photos exactly the way you want, on Windows.
 </p>
 
 <p align="center">
@@ -40,6 +40,16 @@ paper-saving; then print it as a booklet or two pages per sheet.
 
 ![An e-book typeset into A5 pages, two per sheet, with running head and page numbers](docs/screenshots/ebook.png)
 
+**Photos and pictures.** Open JPEG, PNG, GIF, BMP, TIFF, WebP, ICO, TGA, QOI and more, plus HEIC, AVIF and
+camera RAW when the Windows extension for them is installed. Open one picture, several at once or a whole folder,
+and each picture becomes a page. Print at the picture's own size or at standard photo sizes (10×15, 13×18,
+20×25, passport, ID 3×4, wallet…), filling and cropping (you choose which part to keep) or showing the whole picture.
+One click fits as many photos as possible on the paper, with cut marks. Photos are turned upright as the camera
+recorded them, colour profiles (Adobe RGB, Display P3, CMYK) are converted, and auto levels brightens faded scans.
+You also get every page of a multi-page TIFF, a background colour for transparent pictures, captions with the file
+name and date, camera details, and a warning when a picture has too few pixels for the print size. Presets cover
+full-page and borderless prints, 10×15 photos, ID photos and contact sheets.
+
 **Arrange pages.** Drag thumbnails to reorder pages. Right-click a page to duplicate or delete it, insert a blank
 page, or split it in half (a landscape page into two portrait pages, or the other way round). You can also split
 every landscape page, or every portrait page, at once and leave the rest as they are. Undo with Ctrl+Z.
@@ -66,14 +76,16 @@ from your Windows settings), and a default window size and position.
 1. [Download `pdfprintstudio.exe`](https://github.com/mberehulka/pdf-print-studio/releases/latest/download/pdfprintstudio.exe) and run it.
 2. Open **⚙ Settings → Installation**. With one click each, you can:
    - install the program (Start menu entry, and an uninstall entry in Windows Settings → Apps),
-   - add it to Explorer's **Open with** menu for PDF, CBZ and EPUB files (page thumbnails in Explorer keep working),
-   - add **Print with PDF Print Studio…** and **Quick print** to the right-click menu,
+   - add it to Explorer's **Open with** menu for PDF, CBZ, EPUB and picture files (page thumbnails in Explorer keep working),
+   - add **Print with PDF Print Studio…** and **Quick print** to the right-click menu, and **Send to → PDF Print Studio**
+     for printing several selected pictures together,
    - show **Explorer thumbnails** for PDF, CBZ and EPUB files: the first page, the comic's first page or the book cover
      instead of an icon.
 
 Updates come from GitHub. To get the newest version, go to **⚙ Settings → About → Check for updates**.
 
-Command line: `pdfprintstudio file.pdf`, `--quick file.pdf` (prints with the last settings), `--install`, `--uninstall`.
+Command line: `pdfprintstudio file.pdf`, `pdfprintstudio photo1.jpg photo2.jpg` or a folder, `--quick file.pdf` (prints with
+the last settings), `--install`, `--uninstall`.
 
 ## Build from source
 

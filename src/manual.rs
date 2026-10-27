@@ -21,11 +21,11 @@ struct Chapter {
 }
 
 pub const PLAYGROUND: usize = usize::MAX;
-pub const CH_HEADERS: usize = 6;
-pub const CH_WATERMARK: usize = 7;
-pub const CH_STAMPS: usize = 8;
-pub const CH_TEMPLATES: usize = 9;
-pub const CH_COOKBOOK: usize = 12;
+pub const CH_HEADERS: usize = 7;
+pub const CH_WATERMARK: usize = 8;
+pub const CH_STAMPS: usize = 9;
+pub const CH_TEMPLATES: usize = 10;
+pub const CH_COOKBOOK: usize = 13;
 
 static CHAPTERS: &[Chapter] = &[
     Chapter {
@@ -106,7 +106,26 @@ static CHAPTERS: &[Chapter] = &[
             B::H("Copies & output"),
             B::P("Copies can be collated (1-2-3, 1-2-3) or not (1-1, 2-2, 3-3). Print to file writes the printer's output to disk. Export PNG renders every sheet side as an image."),
             B::H("Command line"),
-            B::Code("pdfprintstudio file.pdf\npdfprintstudio --quick file.pdf\npdfprintstudio --install\npdfprintstudio --uninstall"),
+            B::Code("pdfprintstudio file.pdf\npdfprintstudio photo1.jpg photo2.jpg\npdfprintstudio C:\\Photos\\Holiday\npdfprintstudio --quick file.pdf\npdfprintstudio --install\npdfprintstudio --uninstall"),
+        ],
+    },
+    Chapter {
+        title: "🖼 Photos & pictures",
+        blocks: &[
+            B::P("Open JPEG, PNG, GIF, BMP, TIFF, WebP, ICO, TGA, QOI and more – one picture, several at once (Ctrl+click in 📂 Open…, or drop them on the window) or a whole folder (🗀 Folder…). Each picture becomes a page, so everything else – layouts, overlays, colour – works as for PDFs. HEIC, AVIF and camera RAW files open when the matching extension from the Microsoft Store is installed."),
+            B::Tip("In Explorer, select several pictures and use Send to → PDF Print Studio to print them together."),
+            B::H("Print size"),
+            B::Table(&[
+                ("Picture's own size", "pixels ÷ resolution; the resolution comes from the file or the value you set"),
+                ("Photo sizes", "10 × 15, 13 × 18, passport, ID, wallet… each picture becomes a page of exactly that size"),
+                ("Fill and crop", "covers the photo, cutting off what does not fit; choose which part to keep"),
+                ("Show all", "fits the whole picture, filling the rest with the background colour"),
+            ]),
+            B::P("▦ Fit as many as possible on the paper sets the Layout grid and \"Actual size\" scaling so the photos print at exactly the chosen size. Step & repeat fills a sheet with copies of one picture – ID photos."),
+            B::H("Picture quality"),
+            B::P("Photos are turned upright as the camera recorded them, and colour profiles (Adobe RGB, Display P3, CMYK) are converted for correct colours. Auto levels brightens faded scans and hazy photos. The Pictures section shows the resolution each page will print at; below 150 dpi a picture may look soft."),
+            B::H("Captions"),
+            B::P("{pagefile}, {pagename} and {pagedate} hold the file name and date (taken, or else modified) of the picture on a page. Put them in a footer with Place on: each page to caption every photo."),
         ],
     },
     Chapter {
@@ -220,6 +239,8 @@ static CHAPTERS: &[Chapter] = &[
                 ("file", "file name with extension"),
                 ("name / ext", "file name without extension / the extension"),
                 ("folder / path", "parent folder name / full path"),
+                ("pagefile / pagename", "picture on the page: file name with / without extension"),
+                ("pagedate", "when that picture was taken (or else changed)"),
                 ("printer", "printer name"),
                 ("user / computer", "Windows user and computer name"),
             ]),

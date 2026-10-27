@@ -12,6 +12,7 @@ mod layout;
 mod manual;
 mod pages;
 mod pdf;
+mod photo;
 mod prefs;
 mod printer;
 mod settings;
@@ -29,7 +30,7 @@ fn main() {
     update::cleanup();
     install::refresh_thumbnails();
 
-    let mut file: Option<PathBuf> = None;
+    let mut files: Vec<PathBuf> = Vec::new();
     let mut quick = false;
     // --quiet: no message box for --install / --uninstall, failure only in the exit code (for scripts)
     let quiet = std::env::args().any(|a| a == "--quiet");
@@ -49,15 +50,15 @@ fn main() {
             "--help" | "-h" | "/?" => {
                 install::message(
                     "PDF Print Studio",
-                    i18n::tr("Usage:\n  pdfprintstudio [file.pdf]\n  pdfprintstudio --quick file.pdf   (print with last settings)\n  pdfprintstudio --install            (install, add \"Open with\" and context menu)\n  pdfprintstudio --uninstall          (remove everything again)"),
+                    i18n::tr("Usage:\n  pdfprintstudio [file.pdf | pictures… | folder]\n  pdfprintstudio --quick file.pdf   (print with last settings)\n  pdfprintstudio --install            (install, add \"Open with\" and context menu)\n  pdfprintstudio --uninstall          (remove everything again)"),
                     false,
                 );
                 return;
             }
-            _ => file = Some(PathBuf::from(arg)),
+            _ => files.push(PathBuf::from(arg)),
         }
     }
-    if let Err(e) = app::run(file, quick, prefs) {
+    if let Err(e) = app::run(files, quick, prefs) {
         install::message("PDF Print Studio", &trf!("Failed to start UI: {}", e), true);
     }
 }

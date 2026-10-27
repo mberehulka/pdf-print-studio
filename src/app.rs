@@ -8,6 +8,7 @@ use crate::job::{self, JobHandle, JobMsg, Target};
 use crate::layout::{self, Sheet};
 use crate::manual::{self, Manual};
 use crate::pages;
+use crate::photo;
 use crate::prefs::{LangPref, Prefs, Theme};
 use crate::printer::{self, Caps, Geometry, PrinterInfo};
 use crate::settings::*;
@@ -28,7 +29,7 @@ use std::sync::mpsc::{Receiver, Sender};
 
 const THUMB_W: u32 = 180;
 
-pub fn run(file: Option<PathBuf>, quick: bool, prefs: Prefs) -> eframe::Result<()> {
+pub fn run(files: Vec<PathBuf>, quick: bool, prefs: Prefs) -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("PDF Print Studio")
         .with_inner_size(prefs.window_size)
@@ -44,11 +45,22 @@ pub fn run(file: Option<PathBuf>, quick: bool, prefs: Prefs) -> eframe::Result<(
     eframe::run_native(
         "PDF Print Studio",
         opts,
-        Box::new(move |cc| Ok(Box::new(App::new(cc, file, quick, prefs)))),
+        Box::new(move |cc| Ok(Box::new(App::new(cc, files, quick, prefs)))),
     )
 }
 
 const MIN_WINDOW: [f32; 2] = [1100.0, 650.0];
+
+/// The open dialog: documents, or several pictures at once.
+fn pick_files() -> Option<Vec<PathBuf>> {
+    let docs = ["pdf", "cbz", "epub"];
+    let all: Vec<&str> = docs.iter().chain(photo::IMAGE_EXT).copied().collect();
+    rfd::FileDialog::new()
+        .add_filter(tr("All supported files"), &all)
+        .add_filter(tr("PDF, comic book (CBZ) or e-book (EPUB)"), &docs)
+        .add_filter(tr("Pictures"), photo::IMAGE_EXT)
+        .pick_files()
+}
 
 /// The app icon as RGBA pixels.
 fn icon_rgba() -> (Vec<u8>, u32, u32) {
@@ -76,6 +88,8 @@ pub struct App {
     tx: Sender<Req>,
     rx: Receiver<Resp>,
     path: Option<PathBuf>,
+    /// Further pictures opened together with path.
+    more: Vec<PathBuf>,
     password: String,
     need_password: bool,
     open_error: Option<String>,
@@ -89,8 +103,12 @@ pub struct App {
     /// Thumbnail being dragged.
     drag: Option<usize>,
     doc_kind: DocKind,
-    /// Comic book / e-book metadata.
+    /// Comic book / e-book / photo metadata.
     doc_meta: Vec<(String, String)>,
+    /// Per source page: picture file name and date.
+    src_labels: Vec<(String, String)>,
+    /// Per source page: pixels of the picture on it.
+    src_px: Vec<(u32, u32)>,
     /// CBZ / EPUB options the open file was loaded with; CBZ options it was arranged with.
     load_key: String,
     cbz_arrange_key: String,
@@ -154,7 +172,7 @@ pub struct App {
 }
 
 impl App {
-    fn new(cc: &eframe::CreationContext<'_>, file: Option<PathBuf>, quick: bool, prefs: Prefs) -> Self {
+    fn new(cc: &eframe::CreationContext<'_>, files: Vec<PathBuf>, quick: bool, prefs: Prefs) -> Self {
         setup_style(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx, prefs.theme);
         let (tx, rx) = worker::spawn(cc.egui_ctx.clone());
@@ -167,6 +185,7 @@ impl App {
             tx,
             rx,
             path: None,
+            more: Vec::new(),
             password: String::new(),
             need_password: false,
             open_error: None,
@@ -177,6 +196,8 @@ impl App {
             drag: None,
             doc_kind: DocKind::Pdf,
             doc_meta: Vec::new(),
+            src_labels: Vec::new(),
+            src_px: Vec::new(),
             load_key: String::new(),
             cbz_arrange_key: String::new(),
             loading: false,
@@ -237,15 +258,26 @@ impl App {
         if !quick && app.prefs.check_updates {
             app.updater.check_in_background(&cc.egui_ctx, app.prefs.auto_update);
         }
-        if let Some(f) = file {
-            app.open(f);
-        }
+        app.open_many(files);
         app
     }
 
     // ------------------------------------------------------------ document
 
-    fn open(&mut self, path: PathBuf) {
+    /// Open documents chosen by the user; several files make one document when they are all pictures.
+    fn open_many(&mut self, mut paths: Vec<PathBuf>) {
+        if paths.is_empty() {
+            return;
+        }
+        self.password.clear();
+        let first = paths.remove(0);
+        let set = kind_of(&first) == DocKind::Image && paths.iter().all(|p| kind_of(p) == DocKind::Image);
+        self.more = if set { paths } else { Vec::new() };
+        self.load(first);
+    }
+
+    /// (Re)open path together with self.more.
+    fn load(&mut self, path: PathBuf) {
         self.path = Some(path.clone());
         self.sizes_mm.clear();
         self.order.clear();
@@ -264,7 +296,14 @@ impl App {
         self.loading = true;
         let pw = (!self.password.is_empty()).then(|| self.password.clone());
         self.load_key = self.doc_load_key(kind_of(&path));
-        let _ = self.tx.send(Req::Open { path, password: pw, cbz: self.s.cbz.clone(), epub: Box::new(self.s.epub.clone()) });
+        let _ = self.tx.send(Req::Open {
+            path,
+            more: self.more.clone(),
+            password: pw,
+            cbz: self.s.cbz.clone(),
+            epub: Box::new(self.s.epub.clone()),
+            image: Box::new(self.s.image.clone()),
+        });
     }
 
     fn file_name(&self) -> String {
@@ -287,6 +326,8 @@ impl App {
                     self.history.clear();
                     self.doc_kind = info.kind;
                     self.doc_meta = info.meta;
+                    self.src_labels = info.labels;
+                    self.src_px = info.px;
                     self.cbz_arrange_key.clear();
                     if self.doc_kind == DocKind::Cbz && self.doc_meta.iter().any(|(k, v)| k == "Manga" && v == "YesAndRightToLeft") {
                         self.set_rtl(true);
@@ -451,7 +492,22 @@ impl App {
             copies: self.s.copies.max(1) as usize,
             printer: self.s.printer.clone(),
             clock: Clock::now(),
+            page_labels: std::sync::Arc::new(self.page_labels()),
         }
+    }
+
+    /// Caption data of each arranged page.
+    fn page_labels(&self) -> Vec<(String, String)> {
+        if self.src_labels.is_empty() {
+            return Vec::new();
+        }
+        self.order
+            .iter()
+            .map(|p| match *p {
+                PageSrc::Pdf(i, _) => self.src_labels.get(i).cloned().unwrap_or_default(),
+                PageSrc::Blank(..) => Default::default(),
+            })
+            .collect()
     }
 
     /// Template variables for the side shown in the print preview.
@@ -504,6 +560,7 @@ impl App {
         save_last(&self.s);
         let spec = job::JobSpec {
             path,
+            more: self.more.clone(),
             password: (!self.password.is_empty()).then(|| self.password.clone()),
             settings: self.s.clone(),
             order: self.order.clone(),
@@ -734,11 +791,8 @@ impl eframe::App for App {
         self.recompute();
 
         // drag & drop
-        let dropped = ctx.input(|i| i.raw.dropped_files.iter().find_map(|f| f.path.clone()));
-        if let Some(p) = dropped {
-            self.password.clear();
-            self.open(p);
-        }
+        let dropped: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
+        self.open_many(dropped);
 
         // quick print mode: print as soon as everything is ready
         if self.quick && !self.quick_started && !self.sizes_mm.is_empty() && !self.sheets.is_empty() {
@@ -835,14 +889,21 @@ impl App {
                 ui.add(egui::Image::new(&self.logo).fit_to_exact_size(vec2(24.0, 24.0)));
                 ui.label(RichText::new("PDF Print Studio").strong().size(17.0).color(ACCENT));
                 ui.separator();
-                if ui.button(tr("📂 Open…")).clicked() {
-                    if let Some(p) = rfd::FileDialog::new().add_filter(tr("PDF, comic book (CBZ) or e-book (EPUB)"), &["pdf", "cbz", "epub"]).pick_file() {
-                        self.password.clear();
-                        self.open(p);
+                if ui.button(tr("📂 Open…")).on_hover_text(tr("Ctrl+click or Shift+click to choose several pictures")).clicked() {
+                    if let Some(p) = pick_files() {
+                        self.open_many(p);
+                    }
+                }
+                if ui.button(tr("🗀 Folder…")).on_hover_text(tr("Print all pictures in a folder")).clicked() {
+                    if let Some(p) = rfd::FileDialog::new().pick_folder() {
+                        self.open_many(vec![p]);
                     }
                 }
                 if !self.sizes_mm.is_empty() {
                     ui.label(RichText::new(self.file_name()).strong());
+                    if !self.more.is_empty() {
+                        ui.label(RichText::new(trf!("+ {} more", self.more.len())).color(Color32::GRAY));
+                    }
                     ui.label(RichText::new(trf!("{} pages", self.sizes_mm.len())).color(Color32::GRAY));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1324,13 +1385,21 @@ impl App {
                 return;
             }
             ui.add(egui::Image::new(&self.logo).fit_to_exact_size(vec2(96.0, 96.0)));
-            ui.label(RichText::new(tr("Drop a PDF, comic book (CBZ) or e-book (EPUB) here, or open one")).size(22.0));
+            ui.label(RichText::new(tr("Drop a PDF, comic book (CBZ), e-book (EPUB) or pictures here, or open one")).size(22.0));
             ui.add_space(10.0);
-            if ui.add(egui::Button::new(RichText::new(tr("📂  Open file…")).size(16.0)).min_size(vec2(180.0, 36.0))).clicked() {
-                if let Some(p) = rfd::FileDialog::new().add_filter(tr("PDF, comic book (CBZ) or e-book (EPUB)"), &["pdf", "cbz", "epub"]).pick_file() {
-                    self.open(p);
+            ui.horizontal(|ui| {
+                ui.add_space((ui.available_width() - 376.0).max(0.0) / 2.0);
+                if ui.add(egui::Button::new(RichText::new(tr("📂  Open file…")).size(16.0)).min_size(vec2(180.0, 36.0))).clicked() {
+                    if let Some(p) = pick_files() {
+                        self.open_many(p);
+                    }
                 }
-            }
+                if ui.add(egui::Button::new(RichText::new(tr("🗀  Open folder…")).size(16.0)).min_size(vec2(180.0, 36.0))).on_hover_text(tr("Print all pictures in a folder")).clicked() {
+                    if let Some(p) = rfd::FileDialog::new().pick_folder() {
+                        self.open_many(vec![p]);
+                    }
+                }
+            });
             if let Some(e) = &self.open_error {
                 ui.add_space(10.0);
                 ui.label(RichText::new(trf!("Could not open file: {}", e)).color(pal().err));
@@ -1535,6 +1604,7 @@ impl App {
                 match self.doc_kind {
                     DocKind::Cbz => self.ui_cbz(ui),
                     DocKind::Epub => self.ui_epub(ui),
+                    DocKind::Image => self.ui_image(ui),
                     DocKind::Pdf => {}
                 }
                 self.ui_pages(ui);
@@ -2640,7 +2710,7 @@ impl App {
             if submit {
                 if let Some(p) = self.path.clone() {
                     self.need_password = false;
-                    self.open(p);
+                    self.load(p);
                 }
             }
             if cancel {
@@ -2946,6 +3016,7 @@ impl App {
             DocKind::Pdf => String::new(),
             DocKind::Cbz => self.s.cbz.load_key(),
             DocKind::Epub => self.s.epub.load_key(),
+            DocKind::Image => self.s.image.load_key(),
         }
     }
 
@@ -2960,7 +3031,7 @@ impl App {
         }
         if self.doc_load_key(self.doc_kind) != self.load_key {
             if let Some(p) = self.path.clone() {
-                self.open(p);
+                self.load(p);
             }
             return;
         }
@@ -3324,6 +3395,293 @@ impl App {
             });
             let (w, h) = e.page.size_mm(e.custom_mm);
             hint(ui, &trf!("{} pages of {:.0} × {:.0} mm. The Layout section places them on the paper (e.g. two per sheet or as a booklet).", self.src_sizes.len(), w, h));
+        });
+    }
+}
+
+// ------------------------------------------------------------ pictures
+
+impl App {
+    /// As many photos of the chosen size as fit on the paper, printed at their exact size.
+    fn pack_photos(&mut self) {
+        let Some((pw, ph)) = photo::photo_mm(self.s.image.size, self.s.image.custom_mm) else { return };
+        let gap = self.s.cell_gap_mm.max(0.0);
+        let count = |sheet: (f32, f32)| {
+            let a = layout::content_area(sheet, &self.s, self.hw, 0, false);
+            let fit = |w: f32, h: f32| (((a.w + gap) / (w + gap)).floor().max(1.0) as u32, ((a.h + gap) / (h + gap)).floor().max(1.0) as u32);
+            // photos may be turned (auto-rotate) when that fits more
+            [fit(pw, ph), fit(ph, pw)].into_iter().max_by_key(|(c, r)| c * r).unwrap_or((1, 1))
+        };
+        let (w, h) = self.paper_portrait_mm();
+        let (mut best, mut landscape) = (count((w, h)), false);
+        if self.s.orientation == Orientation::Auto || self.s.orientation == Orientation::Landscape {
+            let l = count((h, w));
+            if self.s.orientation == Orientation::Landscape || l.0 * l.1 > best.0 * best.1 {
+                (best, landscape) = (l, true);
+            }
+        }
+        self.s.orientation = if landscape { Orientation::Landscape } else { Orientation::Portrait };
+        self.s.nup_cols = best.0.min(16);
+        self.s.nup_rows = best.1.min(16);
+        self.s.scaling = Scaling::Actual;
+        self.s.auto_rotate = true;
+        self.s.align_h = 1;
+        self.s.align_v = 1;
+    }
+
+    /// Captions under every picture: file name, or file name and date.
+    fn photo_captions(&mut self, with_date: bool) {
+        let f = &mut self.s.footer;
+        f.enabled = true;
+        f.scope = StampScope::EachPage;
+        f.left.clear();
+        f.right.clear();
+        f.center = if with_date { "{pagename}  ·  {pagedate}".into() } else { "{pagename}".into() };
+        f.size_pt = 7.0;
+        f.show_if.clear();
+    }
+
+    fn ui_image(&mut self, ui: &mut Ui) {
+        section(ui, "🖼", tr("Pictures"), true, |ui| {
+            let skipped = self.doc_meta.iter().find(|(k, _)| k == "Skipped").map(|(_, v)| v.clone());
+            if !self.doc_meta.is_empty() {
+                grid(ui, "img_meta", |ui| {
+                    for (k, v) in self.doc_meta.iter().filter(|(k, _)| k != "Skipped") {
+                        ui.label(tr(k));
+                        ui.add(egui::Label::new(RichText::new(v).strong()).wrap());
+                        ui.end_row();
+                    }
+                });
+            }
+            if let Some(s) = skipped {
+                egui::CollapsingHeader::new(RichText::new(trf!("⚠ {} files could not be opened", s.lines().count())).color(pal().err))
+                    .id_salt("img_skipped")
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(s).small());
+                    });
+            }
+
+            ui.horizontal_wrapped(|ui| {
+                if ui.button(tr("➕ Add pictures…")).on_hover_text(tr("Print more pictures together with these")).clicked() {
+                    if let Some(p) = rfd::FileDialog::new().add_filter(tr("Pictures"), photo::IMAGE_EXT).pick_files() {
+                        self.more.extend(p);
+                        if let Some(first) = self.path.clone() {
+                            self.load(first);
+                        }
+                    }
+                }
+            });
+            ui.add_space(2.0);
+
+            ui.horizontal_wrapped(|ui| {
+                ui.label(tr("Presets:"));
+                if ui.small_button(tr("🖼 Full page")).on_hover_text(tr("Each picture as large as the paper allows, with a small margin")).clicked() {
+                    self.s.image.size = PhotoSize::Original;
+                    self.s.layout = LayoutMode::Normal;
+                    self.s.nup_cols = 1;
+                    self.s.nup_rows = 1;
+                    self.s.scaling = Scaling::Fit;
+                    self.s.auto_rotate = true;
+                    self.s.orientation = Orientation::Auto;
+                    self.s.margins_mm = [5.0; 4];
+                    self.s.align_h = 1;
+                    self.s.align_v = 1;
+                }
+                if ui.small_button(tr("🌅 Borderless")).on_hover_text(tr("Fill the paper edge to edge, cropping the overflow; needs a printer that supports borderless printing")).clicked() {
+                    self.s.image.size = PhotoSize::Original;
+                    self.s.layout = LayoutMode::Normal;
+                    self.s.nup_cols = 1;
+                    self.s.nup_rows = 1;
+                    self.s.scaling = Scaling::Fill;
+                    self.s.auto_rotate = true;
+                    self.s.orientation = Orientation::Auto;
+                    self.s.margins_mm = [0.0; 4];
+                    self.s.respect_hw_margins = false;
+                }
+                if ui.small_button(tr("📷 10 × 15 prints")).on_hover_text(tr("Classic 4 × 6 in photos, as many per sheet as fit, with cut marks")).clicked() {
+                    self.s.image.size = PhotoSize::P10x15;
+                    self.s.image.fit = PhotoFit::Fill;
+                    self.s.layout = LayoutMode::Normal;
+                    self.s.margins_mm = [5.0; 4];
+                    self.s.cell_gap_mm = 2.0;
+                    self.s.crop_marks = true;
+                    self.pack_photos();
+                }
+                if ui.small_button(tr("🛂 ID photos")).on_hover_text(tr("A sheet full of 35 × 45 mm passport photos of the same picture, with cut marks")).clicked() {
+                    self.s.image.size = PhotoSize::Passport;
+                    self.s.image.fit = PhotoFit::Fill;
+                    self.s.image.anchor = 1;
+                    self.s.layout = LayoutMode::Repeat;
+                    self.s.margins_mm = [5.0; 4];
+                    self.s.cell_gap_mm = 2.0;
+                    self.s.crop_marks = true;
+                    self.pack_photos();
+                }
+                if ui.small_button(tr("🗂 Contact sheet")).on_hover_text(tr("Small previews of many pictures per sheet, each with its file name")).clicked() {
+                    self.s.image.size = PhotoSize::Original;
+                    self.s.layout = LayoutMode::Normal;
+                    self.s.nup_cols = 4;
+                    self.s.nup_rows = 5;
+                    self.s.cell_gap_mm = 5.0;
+                    self.s.scaling = Scaling::Fit;
+                    self.s.auto_rotate = false;
+                    self.s.orientation = Orientation::Portrait;
+                    self.s.margins_mm = [10.0; 4];
+                    self.photo_captions(false);
+                }
+            });
+
+            let multi = self.src_labels.iter().map(|l| &l.0).collect::<HashSet<_>>().len() > 1;
+            let (mut pack, mut caption) = (false, None);
+            let im = &mut self.s.image;
+            grid(ui, "img_grid", |ui| {
+                if multi {
+                    ui.label(tr("Order"));
+                    combo(
+                        ui,
+                        "img_sort",
+                        &mut im.sort,
+                        &[
+                            (ImageSort::Name, tr("By name, numbers in order (2 before 10)")),
+                            (ImageSort::Taken, tr("By date taken")),
+                            (ImageSort::Modified, tr("By date modified")),
+                            (ImageSort::AsGiven, tr("As chosen")),
+                        ],
+                    );
+                    ui.end_row();
+                    ui.label("");
+                    ui.checkbox(&mut im.reverse, tr("Reverse the order"));
+                    ui.end_row();
+                }
+
+                ui.label(tr("Print size"));
+                combo(
+                    ui,
+                    "img_size",
+                    &mut im.size,
+                    &[
+                        (PhotoSize::Original, tr("Picture's own size (pixels ÷ resolution)")),
+                        (PhotoSize::P10x15, tr("10 × 15 cm (4 × 6 in)")),
+                        (PhotoSize::P9x13, tr("9 × 13 cm (3.5 × 5 in)")),
+                        (PhotoSize::P13x18, tr("13 × 18 cm (5 × 7 in)")),
+                        (PhotoSize::P15x21, tr("15 × 20 cm (6 × 8 in)")),
+                        (PhotoSize::P20x25, tr("20 × 25 cm (8 × 10 in)")),
+                        (PhotoSize::P20x30, tr("20 × 30 cm (8 × 12 in)")),
+                        (PhotoSize::Square10, tr("Square 10 × 10 cm")),
+                        (PhotoSize::Wallet, tr("Wallet (2.5 × 3.5 in)")),
+                        (PhotoSize::Passport, tr("Passport / ID 35 × 45 mm")),
+                        (PhotoSize::UsPassport, tr("US passport 2 × 2 in")),
+                        (PhotoSize::Id3x4, tr("ID 3 × 4 cm")),
+                        (PhotoSize::A6, "A6 (105 × 148 mm)"),
+                        (PhotoSize::A5, "A5 (148 × 210 mm)"),
+                        (PhotoSize::A4, "A4 (210 × 297 mm)"),
+                        (PhotoSize::Custom, tr("Custom size")),
+                    ],
+                );
+                ui.end_row();
+                if im.size == PhotoSize::Custom {
+                    ui.label("");
+                    ui.horizontal(|ui| {
+                        mm(ui, &mut im.custom_mm[0], 2000.0);
+                        ui.label("×");
+                        mm(ui, &mut im.custom_mm[1], 2000.0);
+                    });
+                    ui.end_row();
+                }
+                if im.size != PhotoSize::Original {
+                    ui.label(tr("Other shapes"));
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(&mut im.fit, PhotoFit::Fill, tr("Fill and crop"))
+                            .on_hover_text(tr("Covers the whole photo; what sticks out is cut off"));
+                        ui.selectable_value(&mut im.fit, PhotoFit::Fit, tr("Show all"))
+                            .on_hover_text(tr("Shows the whole picture with bands of the background colour"));
+                    });
+                    ui.end_row();
+                    if im.fit == PhotoFit::Fill {
+                        ui.label(tr("Keep"));
+                        ui.horizontal(|ui| {
+                            pos_pick(ui, &mut im.anchor);
+                            ui.label(RichText::new(tr("part of the picture kept when cropping (top for portraits)")).small().color(Color32::GRAY));
+                        });
+                        ui.end_row();
+                    }
+                    ui.label("");
+                    ui.checkbox(&mut im.match_orientation, tr("Turn the size to match each picture"))
+                        .on_hover_text(tr("Landscape pictures get a landscape photo, portrait ones a portrait photo"));
+                    ui.end_row();
+                    ui.label("");
+                    pack = ui
+                        .button(tr("▦ Fit as many as possible on the paper"))
+                        .on_hover_text(tr("Sets the grid in Layout and prints the photos at exactly this size"))
+                        .clicked();
+                    ui.end_row();
+                }
+
+                ui.label(tr("Resolution"));
+                ui.horizontal(|ui| {
+                    ui.add(egui::DragValue::new(&mut im.dpi).range(36.0..=2400.0).speed(1.0).suffix(" dpi"));
+                    ui.checkbox(&mut im.use_file_dpi, tr("or the file's own"));
+                })
+                .response
+                .on_hover_text(tr("Only matters for the picture's own size with \"Actual size\" scaling"));
+                ui.end_row();
+
+                ui.label(tr("Orientation"));
+                ui.checkbox(&mut im.exif_rotate, tr("Turn photos upright as the camera recorded"));
+                ui.end_row();
+                ui.label(tr("Colour"));
+                ui.vertical(|ui| {
+                    ui.checkbox(&mut im.color_manage, tr("Convert colour profiles to sRGB"))
+                        .on_hover_text(tr("Correct colours for Adobe RGB, Display P3 and CMYK pictures"));
+                    ui.checkbox(&mut im.auto_levels, tr("Auto levels"))
+                        .on_hover_text(tr("Stretches each picture's tones to full black and white; brightens faded or hazy photos"));
+                });
+                ui.end_row();
+                ui.label(tr("Background"));
+                ui.horizontal(|ui| {
+                    ui.color_edit_button_srgb(&mut im.background);
+                    ui.label(RichText::new(tr("behind transparent parts and around fitted pictures")).small().color(Color32::GRAY));
+                });
+                ui.end_row();
+                ui.label(tr("Multi-page files"));
+                ui.checkbox(&mut im.all_frames, tr("Every page of TIFFs and every frame of GIFs"));
+                ui.end_row();
+
+                ui.label(tr("Captions"));
+                ui.horizontal(|ui| {
+                    if ui.small_button(tr("File name")).clicked() {
+                        caption = Some(false);
+                    }
+                    if ui.small_button(tr("Name and date")).clicked() {
+                        caption = Some(true);
+                    }
+                })
+                .response
+                .on_hover_text(tr("Puts {pagename} / {pagedate} in the footer under every picture; edit it under Headers & footers"));
+                ui.end_row();
+            });
+            if pack {
+                self.pack_photos();
+            }
+            if let Some(with_date) = caption {
+                self.photo_captions(with_date);
+            }
+
+            // will the current picture print sharp?
+            let pages = self.src_px.len();
+            if let (Some(&(pw, ph)), Some(PageSrc::Pdf(src, r))) = (self.sizes_mm.get(self.current), self.order.get(self.current)) {
+                if let Some(&(px, py)) = self.src_px.get(*src) {
+                    let (px, py) = (px as f32 * (r[2] - r[0]), py as f32 * (r[3] - r[1]));
+                    let dpi = (px / (pw / 25.4)).min(py / (ph / 25.4));
+                    let text = trf!("Page {}: {:.0} × {:.0} px over {:.0} × {:.0} mm = {:.0} dpi", self.current + 1, px, py, pw, ph, dpi);
+                    if dpi < 150.0 && self.s.scaling == Scaling::Actual {
+                        ui.label(RichText::new(format!("⚠ {text} {}", tr("(may look soft; 200–300 dpi is ideal)"))).small().color(pal().err));
+                    } else {
+                        hint(ui, &text);
+                    }
+                }
+            }
+            hint(ui, &trf!("{} pictures · {} pages after arranging", pages, self.order.len()));
         });
     }
 }

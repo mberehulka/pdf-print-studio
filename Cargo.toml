@@ -1,6 +1,6 @@
 [package]
 name = "pdf-print-studio"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 description = "Advanced PDF printing tool with Explorer context-menu integration"
 repository = "https://github.com/mberehulka/pdf-print-studio"
@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 eframe = { version = "0.29.1", default-features = false, features = ["default_fonts", "glow"] }
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "tiff", "ico", "tga", "pnm", "qoi", "hdr"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 ab_glyph = "0.2"
 serde = { version = "1", features = ["derive"] }

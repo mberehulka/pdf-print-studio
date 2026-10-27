@@ -34,6 +34,8 @@ pub struct StampCtx {
     pub copies: usize,
     pub printer: String,
     pub clock: Clock,
+    /// Per arranged page: picture file name and date (pictures only).
+    pub page_labels: Arc<Vec<(String, String)>>,
 }
 
 const MAX_TILE_PIXELS: u64 = 40_000_000;
@@ -336,6 +338,10 @@ pub fn template_vars(ctx: &StampCtx, sheet: Option<&Sheet>, s: &Settings, cell: 
     set("tilerow", poster.map_or(0, |p| p.ty as usize + 1).into());
     set("tilecol", poster.map_or(0, |p| p.tx as usize + 1).into());
     set("tile", poster.map_or(String::new(), |p| format!("{}{}", (b'A' + (p.ty % 26) as u8) as char, p.tx + 1)).into());
+    let label = pages.first().and_then(|&p| ctx.page_labels.get(p)).cloned().unwrap_or_default();
+    set("pagefile", label.0.clone().into());
+    set("pagename", os(Path::new(&label.0).file_stem()).into());
+    set("pagedate", label.1.into());
     set("name", os(fpath.file_stem()).into());
     set("ext", os(fpath.extension()).into());
     set("file", file.clone().into());

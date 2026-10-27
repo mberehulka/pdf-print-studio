@@ -20,6 +20,8 @@ pub enum Target {
 
 pub struct JobSpec {
     pub path: PathBuf,
+    /// Further pictures opened together with `path`.
+    pub more: Vec<PathBuf>,
     pub password: Option<String>,
     pub settings: Settings,
     /// Page arrangement; `selection` indexes it.
@@ -92,12 +94,12 @@ pub fn output_sequence(n_sides: usize, s: &Settings) -> Vec<(Option<usize>, usiz
 }
 
 fn run(spec: JobSpec, send: &dyn Fn(JobMsg), cont: &Receiver<bool>, cancel: &AtomicBool) -> Result<String, String> {
-    let doc = Doc::open(&spec.path, spec.password.as_deref(), &spec.settings.cbz, &spec.settings.epub)
+    let s = &spec.settings;
+    let doc = Doc::open(&spec.path, &spec.more, spec.password.as_deref(), &s.cbz, &s.epub, &s.image)
         .map_err(|e| crate::trf!("Cannot open file: {}", format!("{e:?}")))?;
     let mut r = Renderer::new(doc, false);
     r.set_order(spec.order.clone());
     let mut fonts = FontCache::default();
-    let s = &spec.settings;
     let mut stamp = spec.stamp.clone();
 
     match spec.target {
@@ -203,6 +205,7 @@ mod tests {
         let pdf = std::env::var("TEST_PDF").expect("TEST_PDF");
         JobSpec {
             path: pdf.into(),
+            more: Vec::new(),
             password: None,
             order: PageSrc::identity(5),
             selection: (0..5).collect(),

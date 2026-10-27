@@ -9,8 +9,10 @@ use std::process::Command;
 use winreg::enums::{HKEY_CLASSES_ROOT, HKEY_CURRENT_USER};
 use winreg::RegKey;
 
-/// File types the app registers for.
+/// Document types the app registers for (with our Explorer thumbnails).
 const EXTS: [&str; 3] = ["pdf", "cbz", "epub"];
+/// Picture types that get "Open with" and the context menu; Windows keeps drawing their thumbnails.
+const IMAGE_EXTS: [&str; 11] = ["jpg", "jpeg", "png", "gif", "bmp", "tif", "tiff", "webp", "heic", "avif", "jfif"];
 const VERB_MAIN: &str = "PdfPrintStudio";
 const VERB_QUICK: &str = "PdfPrintStudioQuick";
 /// Shell extensions Explorer uses for thumbnails and the preview pane.
@@ -66,6 +68,19 @@ fn start_menu_link() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
         .join(r"Microsoft\Windows\Start Menu\Programs\PDF Print Studio.lnk")
+}
+
+/// "Send to → PDF Print Studio" passes every selected file to one window.
+fn send_to_link() -> PathBuf {
+    std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join(r"Microsoft\Windows\SendTo\PDF Print Studio.lnk")
+}
+
+/// Every type with "Open with" and context-menu entries.
+fn all_exts() -> impl Iterator<Item = &'static str> {
+    EXTS.into_iter().chain(IMAGE_EXTS)
 }
 
 fn shell_key(ext: &str) -> String {
@@ -141,18 +156,7 @@ pub fn install_program() -> Result<String, String> {
     let kb = std::fs::metadata(&target).map(|m| (m.len() / 1024) as u32).unwrap_or(0);
     key.set_value("EstimatedSize", &kb).map_err(|e| e.to_string())?;
 
-    // a shortcut needs the COM shell-link object; PowerShell's WScript.Shell is the simplest way to reach it
-    let q = |p: &std::path::Path| p.display().to_string().replace('\'', "''");
-    let script = format!(
-        "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{}');$s.TargetPath='{}';$s.WorkingDirectory='{}';$s.Save()",
-        q(&start_menu_link()),
-        q(&target),
-        q(&install_dir())
-    );
-    let _ = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .creation_flags(CREATE_NO_WINDOW)
-        .status();
+    shortcut(&start_menu_link(), &target);
 
     // entries made by an older copy point to the old exe; refresh them
     let st = status();
@@ -163,6 +167,21 @@ pub fn install_program() -> Result<String, String> {
         install_context_menu()?;
     }
     Ok(trf!("Program installed in {}", t))
+}
+
+/// A shortcut needs the COM shell-link object; PowerShell's WScript.Shell is the simplest way to reach it.
+fn shortcut(link: &std::path::Path, target: &std::path::Path) {
+    let q = |p: &std::path::Path| p.display().to_string().replace('\'', "''");
+    let script = format!(
+        "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{}');$s.TargetPath='{}';$s.WorkingDirectory='{}';$s.Save()",
+        q(link),
+        q(target),
+        q(&install_dir())
+    );
+    let _ = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
 }
 
 /// Removes everything: Explorer entries, shortcut, "Apps & features" entry and the installed exe.
@@ -230,24 +249,26 @@ pub fn register_open_with() -> Result<String, String> {
     // lets the app show up in Settings → Default apps
     let caps = create(CAPS_KEY)?;
     set(&caps, "ApplicationName", APP_NAME)?;
-    set(&caps, "ApplicationDescription", "Advanced PDF, comic book and e-book printing")?;
+    set(&caps, "ApplicationDescription", "Advanced PDF, comic book, e-book and photo printing")?;
     set(&caps, "ApplicationIcon", &icon)?;
     set(&create(r"Software\RegisteredApplications")?, APP_NAME, CAPS_KEY)?;
 
-    for ext in EXTS {
+    for ext in all_exts() {
         let id = prog_id(ext);
         let kind = match ext {
-            "pdf" => "PDF",
-            "cbz" => "Comic book (CBZ)",
-            _ => "E-book (EPUB)",
+            "pdf" => "PDF".to_string(),
+            "cbz" => "Comic book (CBZ)".to_string(),
+            "epub" => "E-book (EPUB)".to_string(),
+            _ => format!("{} image", ext.to_uppercase()),
         };
         let prog = create(&format!(r"Software\Classes\{id}"))?;
-        set(&prog, "", kind)?;
-        set(&prog, "FriendlyTypeName", kind)?;
+        set(&prog, "", &kind)?;
+        set(&prog, "FriendlyTypeName", &kind)?;
         set(&create(&format!(r"Software\Classes\{id}\DefaultIcon"))?, "", &icon)?;
         set(&create(&format!(r"Software\Classes\{id}\shell\open\command"))?, "", &open)?;
         for shellex in SHELLEX {
-            let ours = shellex == THUMBNAIL_HANDLER && status().thumbnails;
+            // pictures keep Windows' own thumbnails
+            let ours = shellex == THUMBNAIL_HANDLER && status().thumbnails && EXTS.contains(&ext);
             if let Some(clsid) = if ours { Some(THUMB_CLSID.to_string()) } else { existing_shellex(ext, shellex) } {
                 set(&create(&format!(r"Software\Classes\{id}\ShellEx\{shellex}"))?, "", &clsid)?;
             }
@@ -263,7 +284,7 @@ pub fn register_open_with() -> Result<String, String> {
 
 pub fn unregister_open_with() -> Result<String, String> {
     let h = hkcu();
-    for ext in EXTS {
+    for ext in all_exts() {
         let id = prog_id(ext);
         let _ = h.delete_subkey_all(format!(r"Software\Classes\{id}"));
         if let Ok(k) = h.open_subkey_with_flags(format!(r"Software\Classes\.{ext}\OpenWithProgids"), winreg::enums::KEY_WRITE) {
@@ -369,7 +390,7 @@ pub fn install_context_menu() -> Result<String, String> {
         (VERB_MAIN, tr("Print with PDF Print Studio…"), format!("\"{t}\" \"%1\"")),
         (VERB_QUICK, tr("Quick print (last settings)"), format!("\"{t}\" --quick \"%1\"")),
     ];
-    for ext in EXTS {
+    for ext in all_exts() {
         let shell = shell_key(ext);
         for (verb, label, cmd) in &verbs {
             let key = create(&format!(r"{shell}\{verb}"))?;
@@ -379,12 +400,14 @@ pub fn install_context_menu() -> Result<String, String> {
             set(&create(&format!(r"{shell}\{verb}\command"))?, "", cmd)?;
         }
     }
+    shortcut(&send_to_link(), &installed_exe());
     notify_shell();
     Ok(tr("Context menu installed.").into())
 }
 
 pub fn uninstall_context_menu() -> Result<String, String> {
-    for ext in EXTS {
+    let _ = std::fs::remove_file(send_to_link());
+    for ext in all_exts() {
         for verb in [VERB_MAIN, VERB_QUICK] {
             let _ = hkcu().delete_subkey_all(format!(r"{}\{verb}", shell_key(ext)));
         }
@@ -402,7 +425,7 @@ pub fn install() -> Result<String, String> {
     install_context_menu()?;
     install_thumbnails()?;
     Ok(trf!(
-        "PDF Print Studio is installed.\n\nRight-click any PDF → \"Print with PDF Print Studio…\" or \"Open with\" (on Windows 11 under \"Show more options\").\n\nProgram location:\n{}",
+        "PDF Print Studio is installed.\n\nRight-click any PDF or picture → \"Print with PDF Print Studio…\" or \"Open with\" (on Windows 11 under \"Show more options\"). To print several pictures together, select them and use \"Send to → PDF Print Studio\".\n\nProgram location:\n{}",
         installed_exe().display()
     ))
 }
