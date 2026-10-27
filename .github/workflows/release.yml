@@ -27,7 +27,9 @@ jobs:
           fi
 
       - name: Test
-        run: cargo test --release
+        run: |
+          cargo test --release
+          cargo test --release --manifest-path thumbs/Cargo.toml
 
       - name: Build
         run: cargo build --release

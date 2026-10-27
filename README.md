@@ -5,7 +5,7 @@
 <h1 align="center">PDF Print Studio</h1>
 
 <p align="center">
-  Print PDFs and comic books exactly the way you want, on Windows.
+  Print PDFs, comic books and e-books exactly the way you want, on Windows.
 </p>
 
 <p align="center">
@@ -32,8 +32,17 @@ ComicInfo metadata and has presets for manga, comics, two-up and booklets.
 
 ![A comic book with its CBZ panel: metadata, presets and spread handling](docs/screenshots/comic.png)
 
+**E-books (EPUB).** E-books have no fixed pages, so PDF Print Studio typesets them into real book pages. You choose
+the page size (A5, A6, 6×9 in paperback…), margins, font, text size, line spacing, indents and justification.
+Chapters can start on a new or right-hand page, and you can add a cover page, a generated table of contents,
+running heads with the chapter title and page numbers. Presets cover paperback, pocket book, large print and
+paper-saving; then print it as a booklet or two pages per sheet.
+
+![An e-book typeset into A5 pages, two per sheet, with running head and page numbers](docs/screenshots/ebook.png)
+
 **Arrange pages.** Drag thumbnails to reorder pages. Right-click a page to duplicate or delete it, insert a blank
-page, or split it in half (a landscape page into two portrait pages, or the other way round). Undo with Ctrl+Z.
+page, or split it in half (a landscape page into two portrait pages, or the other way round). You can also split
+every landscape page, or every portrait page, at once and leave the rest as they are. Undo with Ctrl+Z.
 This only affects printing; your file is never modified.
 
 **Watermarks, headers and stamps.** Add text or PNG watermarks, headers and footers, Bates numbers, "COPY" and
@@ -57,8 +66,10 @@ from your Windows settings), and a default window size and position.
 1. [Download `pdfprintstudio.exe`](https://github.com/mberehulka/pdf-print-studio/releases/latest/download/pdfprintstudio.exe) and run it.
 2. Open **⚙ Settings → Installation**. With one click each, you can:
    - install the program (Start menu entry, and an uninstall entry in Windows Settings → Apps),
-   - add it to Explorer's **Open with** menu for PDF and CBZ files (page thumbnails in Explorer keep working),
-   - add **Print with PDF Print Studio…** and **Quick print** to the right-click menu.
+   - add it to Explorer's **Open with** menu for PDF, CBZ and EPUB files (page thumbnails in Explorer keep working),
+   - add **Print with PDF Print Studio…** and **Quick print** to the right-click menu,
+   - show **Explorer thumbnails** for PDF, CBZ and EPUB files: the first page, the comic's first page or the book cover
+     instead of an icon.
 
 Updates come from GitHub. To get the newest version, go to **⚙ Settings → About → Check for updates**.
 

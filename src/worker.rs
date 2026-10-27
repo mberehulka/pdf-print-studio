@@ -3,9 +3,9 @@
 
 use crate::compose::{self, PageRenderer, StampCtx};
 use crate::layout::Sheet;
-use crate::doc::Doc;
+use crate::doc::{Doc, DocKind};
 use crate::pdf::{self, OpenError};
-use crate::settings::{CbzOptions, Settings};
+use crate::settings::{CbzOptions, EpubOptions, Settings};
 use crate::text::FontCache;
 use image::{Rgba, RgbImage, RgbaImage};
 use std::collections::{HashMap, VecDeque};
@@ -156,13 +156,13 @@ impl PageRenderer for Renderer {
 pub struct DocInfo {
     pub path: PathBuf,
     pub sizes_mm: Vec<(f32, f32)>,
-    pub cbz: bool,
-    /// ComicInfo.xml fields of a comic book.
+    pub kind: DocKind,
+    /// Comic book / e-book metadata.
     pub meta: Vec<(String, String)>,
 }
 
 pub enum Req {
-    Open { path: PathBuf, password: Option<String>, cbz: CbzOptions },
+    Open { path: PathBuf, password: Option<String>, cbz: CbzOptions, epub: Box<EpubOptions> },
     /// Thumbnails and viewer bitmaps are whole PDF pages (`page` = PDF page index).
     Thumb { page: usize, width: u32 },
     View { page: usize, width: u32 },
@@ -220,15 +220,15 @@ fn run(rx: Receiver<Req>, tx: Sender<Resp>, ctx: eframe::egui::Context) {
         let mut last_view = None;
         for r in pending {
             match r {
-                Req::Open { path, password, cbz } => {
+                Req::Open { path, password, cbz, epub } => {
                     thumbs.clear();
                     last_sheet = None;
                     last_view = None;
-                    match Doc::open(&path, password.as_deref(), &cbz) {
+                    match Doc::open(&path, password.as_deref(), &cbz, &epub) {
                         Ok(d) => {
-                            let (is_cbz, meta) = (matches!(d, Doc::Cbz(_)), d.meta());
+                            let (kind, meta) = (d.kind(), d.meta());
                             let rdr = Renderer::new(d, true);
-                            send(Resp::Opened(DocInfo { path, sizes_mm: rdr.sizes_mm().to_vec(), cbz: is_cbz, meta }));
+                            send(Resp::Opened(DocInfo { path, sizes_mm: rdr.sizes_mm().to_vec(), kind, meta }));
                             doc = Some(rdr);
                         }
                         Err(OpenError::NeedPassword) => {

@@ -109,6 +109,14 @@ mod tests {
     }
 
     #[test]
+    fn no_duplicate_keys() {
+        let mut seen = std::collections::HashSet::new();
+        for (en, _) in pt_br::ENTRIES {
+            assert!(seen.insert(en), "duplicate key: {en}");
+        }
+    }
+
+    #[test]
     fn every_entry_keeps_placeholders() {
         let count = |s: &str| s.matches("{}").count() + s.matches("{:.").count();
         for (en, pt) in pt_br::ENTRIES {

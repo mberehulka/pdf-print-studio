@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-fn fonts_dir() -> PathBuf {
+pub fn fonts_dir() -> PathBuf {
     let win = std::env::var_os("WINDIR").unwrap_or_else(|| "C:\\Windows".into());
     PathBuf::from(win).join("Fonts")
 }

@@ -92,7 +92,7 @@ pub fn output_sequence(n_sides: usize, s: &Settings) -> Vec<(Option<usize>, usiz
 }
 
 fn run(spec: JobSpec, send: &dyn Fn(JobMsg), cont: &Receiver<bool>, cancel: &AtomicBool) -> Result<String, String> {
-    let doc = Doc::open(&spec.path, spec.password.as_deref(), &spec.settings.cbz)
+    let doc = Doc::open(&spec.path, spec.password.as_deref(), &spec.settings.cbz, &spec.settings.epub)
         .map_err(|e| crate::trf!("Cannot open file: {}", format!("{e:?}")))?;
     let mut r = Renderer::new(doc, false);
     r.set_order(spec.order.clone());

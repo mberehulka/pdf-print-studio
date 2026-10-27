@@ -312,6 +312,107 @@ impl CbzOptions {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub enum EpubPage {
+    A4,
+    A5,
+    A6,
+    B5,
+    Letter,
+    HalfLetter,
+    /// 6 × 9 in, the usual paperback.
+    Trade,
+    /// 110 × 178 mm mass-market paperback.
+    Pocket,
+    Custom,
+}
+
+impl EpubPage {
+    pub fn size_mm(self, custom: [f32; 2]) -> (f32, f32) {
+        match self {
+            EpubPage::A4 => (210.0, 297.0),
+            EpubPage::A5 => (148.0, 210.0),
+            EpubPage::A6 => (105.0, 148.0),
+            EpubPage::B5 => (176.0, 250.0),
+            EpubPage::Letter => (215.9, 279.4),
+            EpubPage::HalfLetter => (139.7, 215.9),
+            EpubPage::Trade => (152.4, 228.6),
+            EpubPage::Pocket => (110.0, 178.0),
+            EpubPage::Custom => (custom[0].clamp(50.0, 600.0), custom[1].clamp(50.0, 900.0)),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub enum PageNumbers {
+    Off,
+    Center,
+    /// Outside edge: right on right-hand pages, left on left-hand pages.
+    Outside,
+}
+
+/// E-book (.epub) options: how the reflowable text is typeset into pages.
+#[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
+#[serde(default)]
+pub struct EpubOptions {
+    pub page: EpubPage,
+    pub custom_mm: [f32; 2],
+    /// top, outside, bottom, inside (binding side)
+    pub margins_mm: [f32; 4],
+    pub font: String,
+    pub size_pt: f32,
+    /// Line height as a multiple of the font size.
+    pub line_spacing: f32,
+    /// Extra space after paragraphs.
+    pub para_spacing_pt: f32,
+    /// First-line indent of paragraphs.
+    pub indent_mm: f32,
+    pub justify: bool,
+    pub heading_scale: f32,
+    pub center_headings: bool,
+    pub chapter_new_page: bool,
+    /// Chapters start on a right-hand page (blank page inserted when needed).
+    pub chapter_recto: bool,
+    pub cover: bool,
+    pub images: bool,
+    pub toc: bool,
+    /// Chapter title at the top of each page.
+    pub running_head: bool,
+    pub page_numbers: PageNumbers,
+}
+
+impl Default for EpubOptions {
+    fn default() -> Self {
+        Self {
+            page: EpubPage::A5,
+            custom_mm: [148.0, 210.0],
+            margins_mm: [16.0, 14.0, 18.0, 18.0],
+            font: "georgia.ttf".into(),
+            size_pt: 10.5,
+            line_spacing: 1.35,
+            para_spacing_pt: 0.0,
+            indent_mm: 5.0,
+            justify: true,
+            heading_scale: 1.0,
+            center_headings: true,
+            chapter_new_page: true,
+            chapter_recto: false,
+            cover: true,
+            images: true,
+            toc: false,
+            running_head: true,
+            page_numbers: PageNumbers::Outside,
+        }
+    }
+}
+
+impl EpubOptions {
+    /// Every e-book option changes the typesetting, so any change means a new layout.
+    pub fn load_key(&self) -> String {
+        serde_json::to_string(self).unwrap_or_default()
+    }
+}
+
 #[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
 #[serde(default)]
 pub struct Settings {
@@ -404,6 +505,8 @@ pub struct Settings {
 
     // ---- comic books
     pub cbz: CbzOptions,
+    // ---- e-books
+    pub epub: EpubOptions,
 }
 
 impl Default for Settings {
@@ -497,6 +600,7 @@ impl Default for Settings {
             output_file: String::new(),
 
             cbz: CbzOptions::default(),
+            epub: EpubOptions::default(),
         }
     }
 }

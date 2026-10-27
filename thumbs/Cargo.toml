@@ -1,0 +1,37 @@
+[package]
+name = "pdfprintstudio-thumbs"
+version = "0.1.0"
+edition = "2021"
+description = "Explorer thumbnail provider for PDF, CBZ and EPUB files (embedded in PDF Print Studio)"
+publish = false
+
+# Built by the main crate's build script and embedded in the exe; not part of its workspace.
+[workspace]
+
+[lib]
+name = "pdfprintstudio_thumbs"
+crate-type = ["cdylib"]
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+windows-core = "0.58"
+windows = { version = "0.58", features = [
+    "implement",
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_WinRT",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_Graphics_Gdi",
+    "Data_Pdf",
+    "Foundation",
+    "Storage_Streams",
+    "Graphics_Imaging",
+] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
+panic = "abort"

@@ -10,11 +10,16 @@ use winreg::enums::{HKEY_CLASSES_ROOT, HKEY_CURRENT_USER};
 use winreg::RegKey;
 
 /// File types the app registers for.
-const EXTS: [&str; 2] = ["pdf", "cbz"];
+const EXTS: [&str; 3] = ["pdf", "cbz", "epub"];
 const VERB_MAIN: &str = "PdfPrintStudio";
 const VERB_QUICK: &str = "PdfPrintStudioQuick";
 /// Shell extensions Explorer uses for thumbnails and the preview pane.
-const SHELLEX: [&str; 2] = ["{e357fccd-a995-4576-b01f-234630154e96}", "{8895b1c6-b41f-4c1c-a562-0d564250836f}"];
+const SHELLEX: [&str; 2] = [THUMBNAIL_HANDLER, "{8895b1c6-b41f-4c1c-a562-0d564250836f}"];
+const THUMBNAIL_HANDLER: &str = "{e357fccd-a995-4576-b01f-234630154e96}";
+/// Our thumbnail provider (thumbs/); must match `CLSID` there.
+const THUMB_CLSID: &str = "{D56D8E8B-1EAC-48CE-822F-4244DA3EB9C7}";
+/// The provider DLL, built by build.rs.
+const THUMBS_DLL: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/thumbs.dll"));
 const APP_KEY: &str = r"Software\Classes\Applications\pdfprintstudio.exe";
 const CAPS_KEY: &str = r"Software\PdfPrintStudio\Capabilities";
 const UNINSTALL_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\PdfPrintStudio";
@@ -101,6 +106,7 @@ pub struct Status {
     pub program: bool,
     pub open_with: bool,
     pub context_menu: bool,
+    pub thumbnails: bool,
 }
 
 pub fn status() -> Status {
@@ -108,6 +114,7 @@ pub fn status() -> Status {
         program: installed_exe().exists() && has_key(UNINSTALL_KEY),
         open_with: has_key(&format!(r"Software\Classes\{}\shell\open\command", prog_id("pdf"))),
         context_menu: has_key(&format!(r"{}\{VERB_MAIN}\command", shell_key("pdf"))),
+        thumbnails: has_key(&format!(r"Software\Classes\CLSID\{THUMB_CLSID}\InprocServer32")),
     }
 }
 
@@ -160,6 +167,7 @@ pub fn install_program() -> Result<String, String> {
 
 /// Removes everything: Explorer entries, shortcut, "Apps & features" entry and the installed exe.
 pub fn uninstall_program() -> Result<String, String> {
+    uninstall_thumbnails()?;
     uninstall_context_menu()?;
     unregister_open_with()?;
     let _ = hkcu().delete_subkey_all(UNINSTALL_KEY);
@@ -204,7 +212,9 @@ fn existing_shellex(ext: &str, shellex: &str) -> Option<String> {
         prog_ids.extend(k.enum_values().flatten().map(|(name, _)| name));
     }
     keys.extend(prog_ids.iter().filter(|p| !p.starts_with("PdfPrintStudio.")).map(|p| format!(r"{p}\ShellEx\{shellex}")));
-    keys.iter().find_map(|k| root.open_subkey(k).ok()?.get_value::<String, _>("").ok().filter(|v| !v.is_empty()))
+    keys.iter().find_map(|k| {
+        root.open_subkey(k).ok()?.get_value::<String, _>("").ok().filter(|v| !v.is_empty() && !v.eq_ignore_ascii_case(THUMB_CLSID))
+    })
 }
 
 pub fn register_open_with() -> Result<String, String> {
@@ -220,20 +230,25 @@ pub fn register_open_with() -> Result<String, String> {
     // lets the app show up in Settings → Default apps
     let caps = create(CAPS_KEY)?;
     set(&caps, "ApplicationName", APP_NAME)?;
-    set(&caps, "ApplicationDescription", "Advanced PDF and comic book printing")?;
+    set(&caps, "ApplicationDescription", "Advanced PDF, comic book and e-book printing")?;
     set(&caps, "ApplicationIcon", &icon)?;
     set(&create(r"Software\RegisteredApplications")?, APP_NAME, CAPS_KEY)?;
 
     for ext in EXTS {
         let id = prog_id(ext);
-        let kind = if ext == "pdf" { "PDF" } else { "Comic book (CBZ)" };
+        let kind = match ext {
+            "pdf" => "PDF",
+            "cbz" => "Comic book (CBZ)",
+            _ => "E-book (EPUB)",
+        };
         let prog = create(&format!(r"Software\Classes\{id}"))?;
         set(&prog, "", kind)?;
         set(&prog, "FriendlyTypeName", kind)?;
         set(&create(&format!(r"Software\Classes\{id}\DefaultIcon"))?, "", &icon)?;
         set(&create(&format!(r"Software\Classes\{id}\shell\open\command"))?, "", &open)?;
         for shellex in SHELLEX {
-            if let Some(clsid) = existing_shellex(ext, shellex) {
+            let ours = shellex == THUMBNAIL_HANDLER && status().thumbnails;
+            if let Some(clsid) = if ours { Some(THUMB_CLSID.to_string()) } else { existing_shellex(ext, shellex) } {
                 set(&create(&format!(r"Software\Classes\{id}\ShellEx\{shellex}"))?, "", &clsid)?;
             }
         }
@@ -267,6 +282,83 @@ pub fn unregister_open_with() -> Result<String, String> {
 /// Windows does not let programs set the default app; open the settings page where the user can.
 pub fn open_default_apps() {
     let _ = Command::new("explorer").arg("ms-settings:defaultapps").spawn();
+}
+
+// ---------------------------------------------------------------- Explorer thumbnails
+
+fn thumbs_dll() -> PathBuf {
+    install_dir().join("pdfprintstudio_thumbs.dll")
+}
+
+/// Put the embedded DLL next to the installed exe. A loaded DLL cannot be overwritten, but it can be
+/// renamed out of the way; leftovers are removed on a later run.
+fn write_thumbs_dll() -> Result<(), String> {
+    let path = thumbs_dll();
+    if std::fs::read(&path).is_ok_and(|d| d == THUMBS_DLL) {
+        return Ok(());
+    }
+    if path.exists() && std::fs::remove_file(&path).is_err() {
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        std::fs::rename(&path, install_dir().join(format!("pdfprintstudio_thumbs.{stamp}.old"))).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&path, THUMBS_DLL).map_err(|e| e.to_string())
+}
+
+fn remove_old_dlls() {
+    if let Ok(rd) = std::fs::read_dir(install_dir()) {
+        for e in rd.flatten() {
+            if e.file_name().to_string_lossy().ends_with(".old") {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+}
+
+/// Previews (first page, comic page, book cover) instead of the app icon for PDF, CBZ and EPUB files.
+pub fn install_thumbnails() -> Result<String, String> {
+    ensure_installed()?;
+    write_thumbs_dll()?;
+    let clsid = format!(r"Software\Classes\CLSID\{THUMB_CLSID}");
+    set(&create(&clsid)?, "", "PDF Print Studio thumbnails")?;
+    let server = create(&format!(r"{clsid}\InprocServer32"))?;
+    set(&server, "", &thumbs_dll().display().to_string())?;
+    set(&server, "ThreadingModel", "Apartment")?;
+    for ext in EXTS {
+        set(&create(&format!(r"Software\Classes\.{ext}\ShellEx\{THUMBNAIL_HANDLER}"))?, "", THUMB_CLSID)?;
+        if has_key(&format!(r"Software\Classes\{}", prog_id(ext))) {
+            set(&create(&format!(r"Software\Classes\{}\ShellEx\{THUMBNAIL_HANDLER}", prog_id(ext)))?, "", THUMB_CLSID)?;
+        }
+    }
+    notify_shell();
+    Ok(tr("Explorer thumbnails enabled. Files already shown may keep their old picture until Windows refreshes its thumbnail cache.").into())
+}
+
+pub fn uninstall_thumbnails() -> Result<String, String> {
+    let h = hkcu();
+    for ext in EXTS {
+        for key in [format!(r"Software\Classes\.{ext}\ShellEx\{THUMBNAIL_HANDLER}"), format!(r"Software\Classes\{}\ShellEx\{THUMBNAIL_HANDLER}", prog_id(ext))] {
+            let ours = h.open_subkey(&key).ok().and_then(|k| k.get_value::<String, _>("").ok()).is_some_and(|v| v.eq_ignore_ascii_case(THUMB_CLSID));
+            if ours {
+                let _ = h.delete_subkey_all(&key);
+            }
+        }
+    }
+    let _ = h.delete_subkey_all(format!(r"Software\Classes\CLSID\{THUMB_CLSID}"));
+    // "Open with" entries go back to borrowing Windows' own previews
+    if status().open_with {
+        register_open_with()?;
+    }
+    notify_shell();
+    let _ = std::fs::remove_file(thumbs_dll());
+    Ok(tr("Explorer thumbnails disabled.").into())
+}
+
+/// After an update, the installed DLL may be older than the one in the exe.
+pub fn refresh_thumbnails() {
+    remove_old_dlls();
+    if running_installed() && status().thumbnails {
+        let _ = write_thumbs_dll();
+    }
 }
 
 // ---------------------------------------------------------------- context menu
@@ -308,6 +400,7 @@ pub fn install() -> Result<String, String> {
     install_program()?;
     register_open_with()?;
     install_context_menu()?;
+    install_thumbnails()?;
     Ok(trf!(
         "PDF Print Studio is installed.\n\nRight-click any PDF → \"Print with PDF Print Studio…\" or \"Open with\" (on Windows 11 under \"Show more options\").\n\nProgram location:\n{}",
         installed_exe().display()

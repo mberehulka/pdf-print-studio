@@ -1,6 +1,6 @@
 [package]
 name = "pdf-print-studio"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Advanced PDF printing tool with Explorer context-menu integration"
 repository = "https://github.com/mberehulka/pdf-print-studio"

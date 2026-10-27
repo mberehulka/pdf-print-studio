@@ -1,6 +1,7 @@
 //! egui front-end: thumbnails, document viewer, live print preview and the settings panel.
 
 use crate::compose::{self, StampCtx};
+use crate::doc::{kind_of, DocKind};
 use crate::i18n::{self, tr, Lang};
 use crate::install;
 use crate::job::{self, JobHandle, JobMsg, Target};
@@ -87,11 +88,11 @@ pub struct App {
     history: Vec<Vec<PageSrc>>,
     /// Thumbnail being dragged.
     drag: Option<usize>,
-    /// The open document is a comic book archive.
-    is_cbz: bool,
-    cbz_meta: Vec<(String, String)>,
-    /// CBZ options the open archive was loaded / arranged with.
-    cbz_load_key: String,
+    doc_kind: DocKind,
+    /// Comic book / e-book metadata.
+    doc_meta: Vec<(String, String)>,
+    /// CBZ / EPUB options the open file was loaded with; CBZ options it was arranged with.
+    load_key: String,
     cbz_arrange_key: String,
     loading: bool,
 
@@ -174,9 +175,9 @@ impl App {
             order: Vec::new(),
             history: Vec::new(),
             drag: None,
-            is_cbz: false,
-            cbz_meta: Vec::new(),
-            cbz_load_key: String::new(),
+            doc_kind: DocKind::Pdf,
+            doc_meta: Vec::new(),
+            load_key: String::new(),
             cbz_arrange_key: String::new(),
             loading: false,
             thumbs: HashMap::new(),
@@ -262,8 +263,8 @@ impl App {
         self.open_error = None;
         self.loading = true;
         let pw = (!self.password.is_empty()).then(|| self.password.clone());
-        self.cbz_load_key = self.s.cbz.load_key();
-        let _ = self.tx.send(Req::Open { path, password: pw, cbz: self.s.cbz.clone() });
+        self.load_key = self.doc_load_key(kind_of(&path));
+        let _ = self.tx.send(Req::Open { path, password: pw, cbz: self.s.cbz.clone(), epub: Box::new(self.s.epub.clone()) });
     }
 
     fn file_name(&self) -> String {
@@ -284,10 +285,10 @@ impl App {
                     self.sizes_mm = info.sizes_mm.clone();
                     self.src_sizes = info.sizes_mm;
                     self.history.clear();
-                    self.is_cbz = info.cbz;
-                    self.cbz_meta = info.meta;
+                    self.doc_kind = info.kind;
+                    self.doc_meta = info.meta;
                     self.cbz_arrange_key.clear();
-                    if self.is_cbz && self.cbz_meta.iter().any(|(k, v)| k == "Manga" && v == "YesAndRightToLeft") {
+                    if self.doc_kind == DocKind::Cbz && self.doc_meta.iter().any(|(k, v)| k == "Manga" && v == "YesAndRightToLeft") {
                         self.set_rtl(true);
                     }
                     self.path = Some(info.path);
@@ -729,7 +730,7 @@ impl eframe::App for App {
         }
         self.poll_worker(ctx);
         self.poll_job(ctx);
-        self.cbz_sync(ctx);
+        self.doc_sync(ctx);
         self.recompute();
 
         // drag & drop
@@ -835,7 +836,7 @@ impl App {
                 ui.label(RichText::new("PDF Print Studio").strong().size(17.0).color(ACCENT));
                 ui.separator();
                 if ui.button(tr("📂 Open…")).clicked() {
-                    if let Some(p) = rfd::FileDialog::new().add_filter(tr("PDF or comic book (CBZ)"), &["pdf", "cbz"]).pick_file() {
+                    if let Some(p) = rfd::FileDialog::new().add_filter(tr("PDF, comic book (CBZ) or e-book (EPUB)"), &["pdf", "cbz", "epub"]).pick_file() {
                         self.password.clear();
                         self.open(p);
                     }
@@ -912,6 +913,14 @@ impl App {
                     ui.menu_button("⋯", |ui| {
                         if ui.button(tr("✂ Split all pages in half")).clicked() {
                             op = Some(PageOp::SplitAll);
+                            ui.close_menu();
+                        }
+                        if ui.button(tr("✂ Split landscape pages only")).on_hover_text(tr("Each landscape page becomes a left and a right page; portrait pages stay as they are")).clicked() {
+                            op = Some(PageOp::SplitOriented(true));
+                            ui.close_menu();
+                        }
+                        if ui.button(tr("✂ Split portrait pages only")).on_hover_text(tr("Each portrait page becomes a top and a bottom page; landscape pages stay as they are")).clicked() {
+                            op = Some(PageOp::SplitOriented(false));
                             ui.close_menu();
                         }
                         if ui.add_enabled(!self.picked.is_empty(), egui::Button::new(trf!("🗑 Delete picked pages ({})", self.picked.len()))).clicked() {
@@ -1151,6 +1160,19 @@ impl App {
             PageOp::SplitAll => {
                 o = o.iter().flat_map(|p| p.split(&self.src_sizes)).collect();
             }
+            PageOp::SplitOriented(landscape) => {
+                let sizes = &self.src_sizes;
+                let pick = |p: &PageSrc| {
+                    let (w, h) = p.size_mm(sizes);
+                    // square pages are neither
+                    (w - h).abs() > 0.5 && (w > h) == landscape
+                };
+                if !o.iter().any(pick) {
+                    self.notify(if landscape { tr("There are no landscape pages") } else { tr("There are no portrait pages") }, false);
+                    return;
+                }
+                o = o.iter().flat_map(|p| if pick(p) { p.split(sizes).to_vec() } else { vec![*p] }).collect();
+            }
             PageOp::Reset => o = PageSrc::identity(self.src_sizes.len()),
         }
         // page positions changed, so picks would point at other pages
@@ -1169,6 +1191,8 @@ enum PageOp {
     InsertBlank(usize),
     Split(usize),
     SplitAll,
+    /// Split only landscape (`true`) or only portrait pages.
+    SplitOriented(bool),
     Reset,
 }
 
@@ -1300,10 +1324,10 @@ impl App {
                 return;
             }
             ui.add(egui::Image::new(&self.logo).fit_to_exact_size(vec2(96.0, 96.0)));
-            ui.label(RichText::new(tr("Drop a PDF or comic book (CBZ) here, or open one")).size(22.0));
+            ui.label(RichText::new(tr("Drop a PDF, comic book (CBZ) or e-book (EPUB) here, or open one")).size(22.0));
             ui.add_space(10.0);
             if ui.add(egui::Button::new(RichText::new(tr("📂  Open file…")).size(16.0)).min_size(vec2(180.0, 36.0))).clicked() {
-                if let Some(p) = rfd::FileDialog::new().add_filter(tr("PDF or comic book (CBZ)"), &["pdf", "cbz"]).pick_file() {
+                if let Some(p) = rfd::FileDialog::new().add_filter(tr("PDF, comic book (CBZ) or e-book (EPUB)"), &["pdf", "cbz", "epub"]).pick_file() {
                     self.open(p);
                 }
             }
@@ -1508,8 +1532,10 @@ impl App {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 ui.add_space(6.0);
                 self.ui_printer(ui);
-                if self.is_cbz {
-                    self.ui_cbz(ui);
+                match self.doc_kind {
+                    DocKind::Cbz => self.ui_cbz(ui),
+                    DocKind::Epub => self.ui_epub(ui),
+                    DocKind::Pdf => {}
                 }
                 self.ui_pages(ui);
                 self.ui_layout(ui);
@@ -2794,7 +2820,7 @@ impl App {
                 if self.prefs_tab == PrefsTab::Installation {
                     let st = self.inst;
                     // (title, description, installed, enable label, disable label, enable, disable)
-                    let rows: [(&str, &str, bool, &str, &str, Toggle, Toggle); 3] = [
+                    let rows: [(&str, &str, bool, &str, &str, Toggle, Toggle); 4] = [
                         (
                             "Program",
                             "Copies the program to your user folder and adds it to the Start menu and to Settings → Apps (no admin rights needed).",
@@ -2821,6 +2847,15 @@ impl App {
                             "Disable",
                             install::install_context_menu,
                             install::uninstall_context_menu,
+                        ),
+                        (
+                            "Explorer thumbnails",
+                            "Shows the first page, comic page or book cover of PDF, CBZ and EPUB files in Explorer instead of the app icon.",
+                            st.thumbnails,
+                            "Enable",
+                            "Disable",
+                            install::install_thumbnails,
+                            install::uninstall_thumbnails,
                         ),
                     ];
                     egui::Grid::new("prefs_install").num_columns(3).spacing([12.0, 7.0]).show(ui, |ui| {
@@ -2905,8 +2940,17 @@ impl App {
 
 impl App {
     /// Reopen the archive when load options changed, re-arrange pages when spread options changed.
-    fn cbz_sync(&mut self, ctx: &egui::Context) {
-        if !self.is_cbz || self.loading || self.src_sizes.is_empty() {
+    /// Options a document of this kind is loaded with; a change means reopening it.
+    fn doc_load_key(&self, kind: DocKind) -> String {
+        match kind {
+            DocKind::Pdf => String::new(),
+            DocKind::Cbz => self.s.cbz.load_key(),
+            DocKind::Epub => self.s.epub.load_key(),
+        }
+    }
+
+    fn doc_sync(&mut self, ctx: &egui::Context) {
+        if self.doc_kind == DocKind::Pdf || self.loading || self.src_sizes.is_empty() {
             return;
         }
         // wait until the user has finished typing or dragging a value
@@ -2914,10 +2958,13 @@ impl App {
         if busy {
             return;
         }
-        if self.s.cbz.load_key() != self.cbz_load_key {
+        if self.doc_load_key(self.doc_kind) != self.load_key {
             if let Some(p) = self.path.clone() {
                 self.open(p);
             }
+            return;
+        }
+        if self.doc_kind != DocKind::Cbz {
             return;
         }
         let c = &self.s.cbz;
@@ -2971,9 +3018,9 @@ impl App {
 
     fn ui_cbz(&mut self, ui: &mut Ui) {
         section(ui, "📚", tr("Comic book (CBZ)"), true, |ui| {
-            if !self.cbz_meta.is_empty() {
+            if !self.doc_meta.is_empty() {
                 grid(ui, "cbz_meta", |ui| {
-                    for (k, v) in &self.cbz_meta {
+                    for (k, v) in &self.doc_meta {
                         if k == "Summary" {
                             continue;
                         }
@@ -2982,7 +3029,7 @@ impl App {
                         ui.end_row();
                     }
                 });
-                if let Some((_, summary)) = self.cbz_meta.iter().find(|(k, _)| k == "Summary") {
+                if let Some((_, summary)) = self.doc_meta.iter().find(|(k, _)| k == "Summary") {
                     egui::CollapsingHeader::new(tr("Summary")).id_salt("cbz_summary").show(ui, |ui| {
                         ui.label(summary);
                     });
@@ -3093,6 +3140,190 @@ impl App {
             }
             let spreads = self.src_sizes.iter().filter(|(w, h)| w / h > self.s.cbz.spread_ratio).count();
             hint(ui, &trf!("{} images · {} spreads · {} pages after arranging", self.src_sizes.len(), spreads, self.order.len()));
+        });
+    }
+}
+
+// ------------------------------------------------------------ e-books
+
+impl App {
+    fn ui_epub(&mut self, ui: &mut Ui) {
+        section(ui, "📗", tr("E-book (EPUB)"), true, |ui| {
+            if !self.doc_meta.is_empty() {
+                grid(ui, "epub_meta", |ui| {
+                    for (k, v) in &self.doc_meta {
+                        if k == "Description" {
+                            continue;
+                        }
+                        ui.label(tr(k));
+                        ui.add(egui::Label::new(RichText::new(v).strong()).wrap());
+                        ui.end_row();
+                    }
+                });
+                if let Some((_, d)) = self.doc_meta.iter().find(|(k, _)| k == "Description") {
+                    egui::CollapsingHeader::new(tr("Description")).id_salt("epub_desc").show(ui, |ui| {
+                        ui.label(d);
+                    });
+                }
+                ui.add_space(4.0);
+            }
+            let e = &mut self.s.epub;
+
+            ui.horizontal_wrapped(|ui| {
+                ui.label(tr("Presets:"));
+                if ui.small_button(tr("📕 Paperback")).on_hover_text(tr("A5 pages, justified 10.5 pt text")).clicked() {
+                    *e = EpubOptions { font: e.font.clone(), ..Default::default() };
+                }
+                if ui.small_button(tr("📙 Pocket book")).on_hover_text(tr("Small A6 pages with narrow margins")).clicked() {
+                    *e = EpubOptions { page: EpubPage::A6, size_pt: 9.0, line_spacing: 1.25, margins_mm: [10.0, 8.0, 12.0, 11.0], font: e.font.clone(), ..Default::default() };
+                }
+                if ui.small_button(tr("🔍 Large print")).on_hover_text(tr("16 pt text with generous spacing")).clicked() {
+                    e.size_pt = 16.0;
+                    e.line_spacing = 1.5;
+                    e.justify = false;
+                    e.indent_mm = 0.0;
+                    e.para_spacing_pt = 8.0;
+                }
+                if ui.small_button(tr("🌲 Save paper")).on_hover_text(tr("Small text, narrow margins, chapters run on, two pages per sheet")).clicked() {
+                    e.size_pt = 9.0;
+                    e.line_spacing = 1.2;
+                    e.margins_mm = [9.0, 9.0, 11.0, 10.0];
+                    e.chapter_new_page = false;
+                    e.chapter_recto = false;
+                    e.cover = false;
+                    self.s.layout = LayoutMode::Normal;
+                    self.s.nup_cols = 2;
+                    self.s.nup_rows = 1;
+                    self.s.orientation = Orientation::Landscape;
+                }
+            });
+            ui.horizontal_wrapped(|ui| {
+                ui.label(tr("Print as:"));
+                if ui.small_button(tr("📚 Booklet")).on_hover_text(tr("A5 pages folded into an A4 booklet, printed two-sided")).clicked() {
+                    self.s.epub.page = EpubPage::A5;
+                    self.s.epub.chapter_recto = true;
+                    self.s.layout = LayoutMode::Booklet;
+                    self.s.cell_gap_mm = 0.0;
+                    self.s.duplex = if self.caps.as_ref().is_some_and(|c| c.duplex) { Duplex::ShortEdge } else { Duplex::Manual };
+                }
+                if ui.small_button(tr("📰 Two pages per sheet")).on_hover_text(tr("Side by side on landscape paper, like an open book")).clicked() {
+                    self.s.layout = LayoutMode::Normal;
+                    self.s.nup_cols = 2;
+                    self.s.nup_rows = 1;
+                    self.s.cell_gap_mm = 0.0;
+                    self.s.orientation = Orientation::Landscape;
+                }
+                if ui.small_button(tr("📄 One page per sheet")).clicked() {
+                    self.s.layout = LayoutMode::Normal;
+                    self.s.nup_cols = 1;
+                    self.s.nup_rows = 1;
+                    self.s.orientation = Orientation::Auto;
+                }
+            });
+
+            let e = &mut self.s.epub;
+            grid(ui, "epub_grid", |ui| {
+                ui.label(tr("Page size"));
+                combo(
+                    ui,
+                    "epub_page",
+                    &mut e.page,
+                    &[
+                        (EpubPage::A5, "A5 (148 × 210 mm)"),
+                        (EpubPage::A6, "A6 (105 × 148 mm)"),
+                        (EpubPage::A4, "A4 (210 × 297 mm)"),
+                        (EpubPage::B5, "B5 (176 × 250 mm)"),
+                        (EpubPage::Trade, tr("Paperback 6 × 9 in")),
+                        (EpubPage::Pocket, tr("Pocket 110 × 178 mm")),
+                        (EpubPage::Letter, "Letter (8.5 × 11 in)"),
+                        (EpubPage::HalfLetter, "Half Letter (5.5 × 8.5 in)"),
+                        (EpubPage::Custom, tr("Custom size")),
+                    ],
+                );
+                ui.end_row();
+                if e.page == EpubPage::Custom {
+                    ui.label(tr("Custom (w × h)"));
+                    ui.horizontal(|ui| {
+                        ui.add(egui::DragValue::new(&mut e.custom_mm[0]).range(50.0..=600.0).suffix(" mm"));
+                        ui.label("×");
+                        ui.add(egui::DragValue::new(&mut e.custom_mm[1]).range(50.0..=900.0).suffix(" mm"));
+                    });
+                    ui.end_row();
+                }
+                ui.label(tr("Margins top / bottom"));
+                ui.horizontal(|ui| {
+                    mm(ui, &mut e.margins_mm[0], 80.0);
+                    mm(ui, &mut e.margins_mm[2], 80.0);
+                });
+                ui.end_row();
+                ui.label(tr("Margins inside / outside"));
+                ui.horizontal(|ui| {
+                    mm(ui, &mut e.margins_mm[3], 80.0);
+                    mm(ui, &mut e.margins_mm[1], 80.0);
+                })
+                .response
+                .on_hover_text(tr("Inside is the binding edge; it alternates between left and right pages"));
+                ui.end_row();
+
+                ui.label(tr("Font"));
+                egui::ComboBox::from_id_salt("epub_font").selected_text(e.font.as_str()).width(220.0).height(360.0).show_ui(ui, |ui| {
+                    for f in &self.fonts {
+                        ui.selectable_value(&mut e.font, f.clone(), f);
+                    }
+                });
+                ui.end_row();
+                ui.label(tr("Text size"));
+                ui.add(egui::DragValue::new(&mut e.size_pt).range(5.0..=40.0).speed(0.1).max_decimals(1).suffix(" pt"));
+                ui.end_row();
+                ui.label(tr("Line spacing"));
+                ui.add(egui::Slider::new(&mut e.line_spacing, 0.9..=3.0).max_decimals(2).prefix("× "));
+                ui.end_row();
+                ui.label(tr("Space between paragraphs"));
+                ui.add(egui::DragValue::new(&mut e.para_spacing_pt).range(0.0..=30.0).speed(0.2).suffix(" pt"));
+                ui.end_row();
+                ui.label(tr("First-line indent"));
+                mm(ui, &mut e.indent_mm, 30.0);
+                ui.end_row();
+                ui.label(tr("Alignment"));
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut e.justify, true, tr("Justified"));
+                    ui.selectable_value(&mut e.justify, false, tr("Left"));
+                });
+                ui.end_row();
+                ui.label(tr("Headings"));
+                ui.horizontal(|ui| {
+                    ui.add(egui::Slider::new(&mut e.heading_scale, 0.0..=2.0).max_decimals(1).prefix("× ")).on_hover_text(tr("How much larger than the text headings are"));
+                    ui.checkbox(&mut e.center_headings, tr("Center them"));
+                });
+                ui.end_row();
+
+                ui.label(tr("Chapters"));
+                ui.vertical(|ui| {
+                    ui.checkbox(&mut e.chapter_new_page, tr("Start on a new page"));
+                    ui.add_enabled(e.chapter_new_page, egui::Checkbox::new(&mut e.chapter_recto, tr("Start on a right-hand page")))
+                        .on_hover_text(tr("Inserts a blank page where needed, as in printed books"));
+                });
+                ui.end_row();
+                ui.label(tr("Include"));
+                ui.vertical(|ui| {
+                    ui.checkbox(&mut e.cover, tr("Cover page"));
+                    ui.checkbox(&mut e.images, tr("Pictures"));
+                    ui.checkbox(&mut e.toc, tr("Table of contents"));
+                });
+                ui.end_row();
+                ui.label(tr("Running head"));
+                ui.checkbox(&mut e.running_head, tr("Chapter title at the top of each page"));
+                ui.end_row();
+                ui.label(tr("Page numbers"));
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut e.page_numbers, PageNumbers::Off, tr("None"));
+                    ui.selectable_value(&mut e.page_numbers, PageNumbers::Center, tr("Center"));
+                    ui.selectable_value(&mut e.page_numbers, PageNumbers::Outside, tr("Outside edge"));
+                });
+                ui.end_row();
+            });
+            let (w, h) = e.page.size_mm(e.custom_mm);
+            hint(ui, &trf!("{} pages of {:.0} × {:.0} mm. The Layout section places them on the paper (e.g. two per sheet or as a booklet).", self.src_sizes.len(), w, h));
         });
     }
 }

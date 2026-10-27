@@ -4,6 +4,7 @@ mod app;
 mod cbz;
 mod compose;
 mod doc;
+mod epub;
 mod i18n;
 mod install;
 mod job;
@@ -26,19 +27,24 @@ fn main() {
     let prefs = prefs::Prefs::load();
     prefs.apply_lang();
     update::cleanup();
+    install::refresh_thumbnails();
 
     let mut file: Option<PathBuf> = None;
     let mut quick = false;
+    // --quiet: no message box for --install / --uninstall, failure only in the exit code (for scripts)
+    let quiet = std::env::args().any(|a| a == "--quiet");
+    let finish = |r: Result<String, String>| {
+        let failed = r.is_err();
+        if !quiet {
+            install::report(r);
+        }
+        std::process::exit(failed as i32);
+    };
     for arg in std::env::args().skip(1) {
         match arg.as_str() {
-            "--install" => {
-                install::report(install::install());
-                return;
-            }
-            "--uninstall" => {
-                install::report(install::uninstall());
-                return;
-            }
+            "--install" => finish(install::install()),
+            "--uninstall" => finish(install::uninstall()),
+            "--quiet" => {}
             "--quick" => quick = true,
             "--help" | "-h" | "/?" => {
                 install::message(
