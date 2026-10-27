@@ -12,9 +12,9 @@ fn parse_num(s: &str, n: usize) -> Result<usize, String> {
         "end" | "last" | "$" => return Ok(n),
         _ => {}
     }
-    let v: usize = s.parse().map_err(|_| format!("'{s}' is not a page number"))?;
+    let v: usize = s.parse().map_err(|_| crate::trf!("'{}' is not a page number", s))?;
     if v == 0 || v > n {
-        return Err(format!("page {v} is out of range (1-{n})"));
+        return Err(crate::trf!("page {} is out of range (1-{})", v, n));
     }
     Ok(v)
 }
@@ -30,7 +30,7 @@ pub fn parse_ranges(input: &str, n: usize) -> Result<Vec<usize>, String> {
             Some((b, r)) => (
                 b,
                 r.parse::<usize>()
-                    .map_err(|_| format!("bad repeat count in '{tok}'"))?
+                    .map_err(|_| crate::trf!("bad repeat count in '{}'", tok))?
                     .clamp(1, 999),
             ),
             None => (tok, 1),
@@ -77,7 +77,7 @@ pub fn compute_selection(
 
     if !s.exclude.trim().is_empty() {
         let ex: HashSet<usize> = parse_ranges(&s.exclude, page_count)
-            .map_err(|e| format!("Exclude: {e}"))?
+            .map_err(|e| crate::trf!("Exclude: {}", e))?
             .into_iter()
             .collect();
         list.retain(|p| !ex.contains(p));

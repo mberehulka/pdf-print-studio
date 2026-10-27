@@ -160,7 +160,7 @@ fn run(rx: Receiver<Req>, tx: Sender<Resp>, ctx: eframe::egui::Context) {
                         }
                         Err(OpenError::NeedPassword) => {
                             doc = None;
-                            send(Resp::OpenFailed { need_password: true, msg: "This PDF is password protected.".into() })
+                            send(Resp::OpenFailed { need_password: true, msg: crate::i18n::tr("This PDF is password protected.").into() })
                         }
                         Err(OpenError::Other(m)) => {
                             doc = None;

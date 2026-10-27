@@ -487,7 +487,7 @@ fn sanitize(name: &str) -> String {
 pub fn save_preset(name: &str, s: &Settings) -> Result<(), String> {
     let name = sanitize(name);
     if name.is_empty() {
-        return Err("Preset name is empty".into());
+        return Err(crate::i18n::tr("Preset name is empty").into());
     }
     std::fs::create_dir_all(presets_dir()).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(s).map_err(|e| e.to_string())?;

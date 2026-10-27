@@ -1,6 +1,8 @@
 //! In-app user manual (the ❓ button / F1) with a live template playground.
 
+use crate::i18n::tr;
 use crate::template::{Template, Vars};
+use crate::theme::pal;
 use eframe::egui::{self, Color32, RichText, Ui};
 
 enum B {
@@ -322,7 +324,7 @@ impl Default for Manual {
 }
 
 fn mono(t: &str) -> RichText {
-    RichText::new(t).monospace().color(Color32::from_rgb(170, 210, 255))
+    RichText::new(t).monospace().color(pal().code_fg)
 }
 
 impl Manual {
@@ -333,7 +335,7 @@ impl Manual {
 
     pub fn show(&mut self, ctx: &egui::Context, vars: &Vars) {
         let mut open = self.open;
-        egui::Window::new("❓ PDF Print Studio – Manual")
+        egui::Window::new(tr("❓ PDF Print Studio – Manual"))
             .open(&mut open)
             .default_size([900.0, 640.0])
             .min_width(640.0)
@@ -346,7 +348,7 @@ impl Manual {
                 ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {
                         ui.set_width(200.0);
-                        ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("🔍 search").desired_width(190.0));
+                        ui.add(egui::TextEdit::singleline(&mut self.search).hint_text(tr("🔍 search")).desired_width(190.0));
                         ui.add_space(4.0);
                         let q = self.search.trim().to_lowercase();
                         egui::ScrollArea::vertical().id_salt("man_nav").max_height(h - 30.0).show(ui, |ui| {
@@ -354,12 +356,12 @@ impl Manual {
                                 if !q.is_empty() && !chapter_matches(c, &q) {
                                     continue;
                                 }
-                                if ui.selectable_label(self.chapter == i, c.title).clicked() {
+                                if ui.selectable_label(self.chapter == i, tr(c.title)).clicked() {
                                     self.chapter = i;
                                 }
                             }
                             ui.separator();
-                            if ui.selectable_label(self.chapter == PLAYGROUND, "🧪 Playground").clicked() {
+                            if ui.selectable_label(self.chapter == PLAYGROUND, tr("🧪 Playground")).clicked() {
                                 self.chapter = PLAYGROUND;
                             }
                         });
@@ -384,39 +386,39 @@ impl Manual {
     }
 
     fn ui_chapter(&mut self, ui: &mut Ui, c: &Chapter) {
-        ui.heading(c.title);
+        ui.heading(tr(c.title));
         ui.add_space(4.0);
         for b in c.blocks {
             match b {
                 B::H(t) => {
                     ui.add_space(6.0);
-                    ui.label(RichText::new(*t).strong().size(15.0));
+                    ui.label(RichText::new(tr(t)).strong().size(15.0));
                 }
                 B::P(t) => {
-                    ui.label(*t);
+                    ui.label(tr(t));
                 }
                 B::Tip(t) => {
                     egui::Frame::none()
-                        .fill(Color32::from_rgb(30, 48, 70))
+                        .fill(pal().tip_bg)
                         .rounding(4.0)
                         .inner_margin(8.0)
                         .show(ui, |ui| {
-                            ui.label(RichText::new(format!("💡 {t}")).color(Color32::from_rgb(200, 225, 255)));
+                            ui.label(RichText::new(format!("💡 {}", tr(t))).color(pal().tip_fg));
                         });
                 }
                 B::Code(t) => {
                     egui::Frame::none()
-                        .fill(Color32::from_rgb(20, 21, 24))
+                        .fill(pal().code_bg)
                         .rounding(4.0)
                         .inner_margin(8.0)
                         .show(ui, |ui| {
                             ui.set_min_width(ui.available_width());
-                            ui.label(mono(t));
+                            ui.label(mono(tr(t)));
                         });
                 }
                 B::Ex(tpl, what) => {
                     egui::Frame::none()
-                        .fill(Color32::from_rgb(20, 21, 24))
+                        .fill(pal().code_bg)
                         .rounding(4.0)
                         .inner_margin(6.0)
                         .show(ui, |ui| {
@@ -424,24 +426,24 @@ impl Manual {
                             ui.horizontal_wrapped(|ui| {
                                 ui.label(mono(tpl));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.small_button("📋 Copy").on_hover_text("Copy to the clipboard").clicked() {
+                                    if ui.small_button(tr("📋 Copy")).on_hover_text(tr("Copy to the clipboard")).clicked() {
                                         ui.ctx().copy_text(tpl.to_string());
                                     }
-                                    if ui.small_button("▶ Try").on_hover_text("Open in the playground").clicked() {
+                                    if ui.small_button(tr("▶ Try")).on_hover_text(tr("Open in the playground")).clicked() {
                                         self.playground = tpl.to_string();
                                         self.chapter = PLAYGROUND;
                                     }
                                 });
                             });
-                            ui.label(RichText::new(*what).small().color(Color32::from_gray(150)));
+                            ui.label(RichText::new(tr(what)).small().color(pal().muted));
                         });
                 }
                 B::Table(rows) => {
                     let max = (ui.available_width() - 200.0).max(240.0);
                     egui::Grid::new(ui.next_auto_id()).num_columns(2).striped(true).spacing([14.0, 5.0]).max_col_width(max).show(ui, |ui| {
                         for (k, v) in rows.iter() {
-                            ui.label(mono(k));
-                            ui.label(*v);
+                            ui.label(mono(tr(k)));
+                            ui.label(tr(v));
                             ui.end_row();
                         }
                     });
@@ -452,8 +454,8 @@ impl Manual {
     }
 
     fn ui_playground(&mut self, ui: &mut Ui, vars: &Vars) {
-        ui.heading("🧪 Playground");
-        ui.label("Type a template; it is evaluated for the side currently shown in the print preview.");
+        ui.heading(tr("🧪 Playground"));
+        ui.label(tr("Type a template; it is evaluated for the side currently shown in the print preview."));
         ui.add(
             egui::TextEdit::multiline(&mut self.playground)
                 .font(egui::TextStyle::Monospace)
@@ -461,35 +463,35 @@ impl Manual {
                 .desired_width(f32::INFINITY),
         );
         ui.horizontal(|ui| {
-            if ui.small_button("📋 Copy").clicked() {
+            if ui.small_button(tr("📋 Copy")).clicked() {
                 ui.ctx().copy_text(self.playground.clone());
             }
-            if ui.small_button("Clear").clicked() {
+            if ui.small_button(tr("Clear")).clicked() {
                 self.playground.clear();
             }
         });
         ui.add_space(4.0);
-        ui.label(RichText::new("Result").strong());
+        ui.label(RichText::new(tr("Result")).strong());
         let (out, err) = match Template::parse(&self.playground) {
             Ok(t) => t.render(vars),
             Err(e) => (String::new(), Some(e)),
         };
         egui::Frame::none().fill(Color32::WHITE).rounding(4.0).inner_margin(10.0).show(ui, |ui| {
             ui.set_min_width(ui.available_width());
-            let shown = if out.is_empty() { "(empty)".to_string() } else { out };
+            let shown = if out.is_empty() { tr("(empty)").to_string() } else { out };
             ui.label(RichText::new(shown).color(Color32::BLACK).size(15.0));
         });
         if let Some(e) = err {
-            ui.label(RichText::new(format!("⚠ {e}")).color(Color32::from_rgb(255, 120, 110)));
+            ui.label(RichText::new(format!("⚠ {e}")).color(pal().err));
         }
         ui.add_space(8.0);
-        ui.label(RichText::new("Current values").strong());
+        ui.label(RichText::new(tr("Current values")).strong());
         let mut keys: Vec<&String> = vars.keys().collect();
         keys.sort();
         let max = (ui.available_width() - 140.0).max(200.0);
         egui::Grid::new("pg_vars").num_columns(2).striped(true).spacing([14.0, 4.0]).max_col_width(max).show(ui, |ui| {
             for k in keys {
-                if ui.link(mono(k)).on_hover_text("Insert into the template").clicked() {
+                if ui.link(mono(k)).on_hover_text(tr("Insert into the template")).clicked() {
                     self.playground.push_str(&format!("{{{k}}}"));
                 }
                 ui.add(egui::Label::new(vars[k].text()).truncate());
@@ -500,7 +502,7 @@ impl Manual {
 }
 
 fn chapter_matches(c: &Chapter, q: &str) -> bool {
-    let has = |t: &str| t.to_lowercase().contains(q);
+    let has = |t: &str| t.to_lowercase().contains(q) || tr(t).to_lowercase().contains(q);
     has(c.title)
         || c.blocks.iter().any(|b| match b {
             B::H(t) | B::P(t) | B::Tip(t) | B::Code(t) => has(t),

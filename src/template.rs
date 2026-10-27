@@ -124,14 +124,14 @@ impl Clock {
     }
 
     pub fn weekday_name(&self) -> &'static str {
-        ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][(self.weekday % 7) as usize]
+        crate::i18n::tr(["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][(self.weekday % 7) as usize])
     }
 
     pub fn month_name(&self) -> &'static str {
         const M: [&str; 12] = [
             "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December",
         ];
-        M[(self.month.clamp(1, 12) - 1) as usize]
+        crate::i18n::tr(M[(self.month.clamp(1, 12) - 1) as usize])
     }
 }
 

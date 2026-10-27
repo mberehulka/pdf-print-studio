@@ -89,7 +89,7 @@ pub fn output_sequence(n_sides: usize, s: &Settings) -> Vec<(Option<usize>, usiz
 }
 
 fn run(spec: JobSpec, send: &dyn Fn(JobMsg), cont: &Receiver<bool>, cancel: &AtomicBool) -> Result<String, String> {
-    let doc = PdfDoc::open(&spec.path, spec.password.as_deref()).map_err(|e| format!("Cannot open PDF: {e:?}"))?;
+    let doc = PdfDoc::open(&spec.path, spec.password.as_deref()).map_err(|e| crate::trf!("Cannot open PDF: {}", format!("{e:?}")))?;
     let mut r = Renderer::new(doc, false);
     let mut fonts = FontCache::default();
     let s = &spec.settings;
@@ -103,14 +103,14 @@ fn run(spec: JobSpec, send: &dyn Fn(JobMsg), cont: &Receiver<bool>, cancel: &Ato
             stamp.sheet_total = total;
             for (i, sh) in sheets.iter().enumerate() {
                 if cancel.load(Ordering::Relaxed) {
-                    return Err("Cancelled".into());
+                    return Err(crate::i18n::tr("Cancelled").into());
                 }
-                send(JobMsg::Progress { done: i, total, label: format!("Rendering sheet {} of {total}", i + 1) });
+                send(JobMsg::Progress { done: i, total, label: crate::trf!("Rendering sheet {} of {}", i + 1, total) });
                 stamp.sheet_no = i + 1;
                 let img = compose::compose_sheet(sh, sheet_mm, s.export_dpi as f32, s, &mut r, &mut fonts, &stamp);
                 img.save(dir.join(format!("sheet_{:03}.png", i + 1))).map_err(|e| e.to_string())?;
             }
-            Ok(format!("Exported {total} sheet(s) to {}", dir.display()))
+            Ok(crate::trf!("Exported {} sheet(s) to {}", total, dir.display()))
         }
         Target::Printer { name, mut devmode, caps } => {
             printer::apply_settings(&mut devmode, s, spec.landscape, caps.as_ref());
@@ -120,7 +120,7 @@ fn run(spec: JobSpec, send: &dyn Fn(JobMsg), cont: &Receiver<bool>, cancel: &Ato
             let sheet_mm = g.sheet_mm();
             let sheets = layout::build_sheets(&spec.selection, sheet_mm, s, g.hw_margins());
             if sheets.is_empty() {
-                return Err("Nothing to print".into());
+                return Err(crate::i18n::tr("Nothing to print").into());
             }
             let dpi = match s.dpi_mode {
                 DpiMode::Printer => (g.dpi_x.min(g.dpi_y) as f32).min(s.max_dpi.max(72) as f32),
@@ -152,7 +152,7 @@ fn run(spec: JobSpec, send: &dyn Fn(JobMsg), cont: &Receiver<bool>, cancel: &Ato
                 if pi == 1 {
                     send(JobMsg::NeedFlip { sheets: phase.len() });
                     if !cont.recv().unwrap_or(false) {
-                        return Ok("Front sides printed; back sides cancelled".into());
+                        return Ok(crate::i18n::tr("Front sides printed; back sides cancelled").into());
                     }
                 }
                 let out = s.print_to_file.then(|| {
@@ -167,9 +167,9 @@ fn run(spec: JobSpec, send: &dyn Fn(JobMsg), cont: &Receiver<bool>, cancel: &Ato
                 for side in phase {
                     if cancel.load(Ordering::Relaxed) {
                         dc.abort();
-                        return Err("Cancelled — job aborted".into());
+                        return Err(crate::i18n::tr("Cancelled — job aborted").into());
                     }
-                    send(JobMsg::Progress { done, total, label: format!("Printing side {} of {total}", done + 1) });
+                    send(JobMsg::Progress { done, total, label: crate::trf!("Printing side {} of {}", done + 1, total) });
                     dc.start_page()?;
                     if let (Some(i), copy) = side {
                         stamp.sheet_no = i + 1;
@@ -182,7 +182,7 @@ fn run(spec: JobSpec, send: &dyn Fn(JobMsg), cont: &Receiver<bool>, cancel: &Ato
                 }
                 dc.end_doc();
             }
-            Ok(format!("Sent {total} side(s) to {name}"))
+            Ok(crate::trf!("Sent {} side(s) to {}", total, name))
         }
     }
 }

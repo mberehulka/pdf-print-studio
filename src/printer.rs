@@ -139,9 +139,9 @@ impl PrinterInfo {
             (0x100000, "Needs attention"),
             (0x400000, "Door open"),
         ];
-        let v: Vec<&str> = FLAGS.iter().filter(|(f, _)| self.status & f != 0).map(|(_, n)| *n).collect();
+        let v: Vec<&str> = FLAGS.iter().filter(|(f, _)| self.status & f != 0).map(|(_, n)| crate::i18n::tr(n)).collect();
         if v.is_empty() {
-            ("Ready".into(), false)
+            (crate::i18n::tr("Ready").into(), false)
         } else {
             let bad = self.status & (0x2 | 0x8 | 0x10 | 0x40 | 0x80 | 0x1000 | 0x40000 | 0x100000 | 0x400000) != 0;
             (v.join(", "), bad)
@@ -642,7 +642,7 @@ impl PrintDc {
         let w = wide(name);
         let hdc = unsafe { CreateDCW(null(), w.as_ptr(), null(), dm.as_ptr()) };
         if hdc == 0 {
-            return Err(format!("Could not open printer '{name}'"));
+            return Err(crate::trf!("Could not open printer '{}'", name));
         }
         Ok(Self { hdc, geom: read_geometry(hdc), in_doc: false })
     }
