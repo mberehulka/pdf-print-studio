@@ -27,6 +27,10 @@ pub struct Prefs {
     /// Outer top-left corner in points; `None` = centred on the screen.
     pub window_pos: Option<[f32; 2]>,
     pub show_rulers: bool,
+    /// Look for a new release when the app starts.
+    pub check_updates: bool,
+    /// Download and install a new release without asking (restart still asked for).
+    pub auto_update: bool,
 }
 
 impl Default for Prefs {
@@ -38,6 +42,8 @@ impl Default for Prefs {
             window_size: [1560.0, 940.0],
             window_pos: None,
             show_rulers: true,
+            check_updates: true,
+            auto_update: false,
         }
     }
 }

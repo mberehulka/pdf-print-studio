@@ -232,6 +232,10 @@ impl App {
             egui_ctx: cc.egui_ctx.clone(),
         };
         app.refresh_printers();
+        // quick print exits right after the job; no point checking then
+        if !quick && app.prefs.check_updates {
+            app.updater.check_in_background(&cc.egui_ctx, app.prefs.auto_update);
+        }
         if let Some(f) = file {
             app.open(f);
         }
@@ -2868,6 +2872,9 @@ impl App {
                     if ui.button(tr("🔄 Check for updates…")).clicked() {
                         check_updates = true;
                     }
+                    ui.checkbox(&mut self.prefs.check_updates, tr("Check for updates when the app starts"));
+                    ui.add_enabled(self.prefs.check_updates, egui::Checkbox::new(&mut self.prefs.auto_update, tr("Download and install updates automatically")))
+                        .on_hover_text(tr("The new version is installed in the background; you choose when to restart"));
                 }
             });
         self.prefs_open = open;

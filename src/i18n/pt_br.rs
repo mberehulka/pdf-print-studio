@@ -169,6 +169,10 @@ pub static ENTRIES: &[(&str, &str)] = &[
     ("Source code, releases and issues on GitHub", "Código-fonte, versões e problemas no GitHub"),
     ("Advanced PDF and comic book printing for Windows.", "Impressão avançada de PDFs e quadrinhos para Windows."),
     ("Report a problem", "Relatar um problema"),
+    ("Check for updates when the app starts", "Procurar atualizações ao abrir o aplicativo"),
+    ("Download and install updates automatically", "Baixar e instalar atualizações automaticamente"),
+    ("The new version is installed in the background; you choose when to restart",
+        "A nova versão é instalada em segundo plano; você escolhe quando reiniciar"),
     // ---------------------------------------------------------------- printer
     ("Printer", "Impressora"),
     ("No printers found", "Nenhuma impressora encontrada"),

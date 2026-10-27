@@ -54,12 +54,14 @@ enum State {
 
 pub struct Updater {
     pub open: bool,
+    /// Background check started at launch: the window only appears when there is news.
+    background: bool,
     state: Arc<Mutex<State>>,
 }
 
 impl Default for Updater {
     fn default() -> Self {
-        Self { open: false, state: Arc::new(Mutex::new(State::Checking)) }
+        Self { open: false, background: false, state: Arc::new(Mutex::new(State::Checking)) }
     }
 }
 
@@ -156,6 +158,17 @@ fn download(url: &str, size: u64, state: &Arc<Mutex<State>>, ctx: &egui::Context
     Ok(())
 }
 
+/// Download and swap in a release; the resulting state for the window.
+fn install_release(release: Release, state: &Arc<Mutex<State>>, ctx: &egui::Context) -> State {
+    let Some((url, size)) = release.exe.clone() else {
+        return State::Available(release);
+    };
+    match download(&url, size, state, ctx) {
+        Ok(()) => State::Ready(release.version.clone()),
+        Err(e) => State::Failed(e, Some(release)),
+    }
+}
+
 /// Removes the previous exe left behind by an update.
 pub fn cleanup() {
     if let Ok((_, old)) = sibling("exe.old") {
@@ -164,13 +177,31 @@ pub fn cleanup() {
 }
 
 impl Updater {
+    /// Check now and show the result.
     pub fn check(&mut self, ctx: &egui::Context) {
         self.open = true;
+        self.background = false;
+        self.spawn_check(ctx, false);
+    }
+
+    /// Quiet check at launch; with `install`, a newer release is downloaded and installed right away.
+    pub fn check_in_background(&mut self, ctx: &egui::Context, install: bool) {
+        self.background = true;
+        self.spawn_check(ctx, install);
+    }
+
+    fn spawn_check(&self, ctx: &egui::Context, install: bool) {
         *self.state.lock().unwrap() = State::Checking;
         let (state, ctx) = (self.state.clone(), ctx.clone());
         std::thread::spawn(move || {
             let s = match fetch_latest() {
-                Ok(r) if is_newer(&r.version, VERSION) => State::Available(r),
+                Ok(r) if is_newer(&r.version, VERSION) => {
+                    if install && r.exe.is_some() {
+                        install_release(r, &state, &ctx)
+                    } else {
+                        State::Available(r)
+                    }
+                }
                 Ok(_) => State::UpToDate,
                 Err(e) => State::Failed(e, None),
             };
@@ -180,14 +211,10 @@ impl Updater {
     }
 
     fn start_download(&self, release: Release, ctx: &egui::Context) {
-        let Some((url, size)) = release.exe.clone() else { return };
-        *self.state.lock().unwrap() = State::Downloading { done: 0, total: size };
+        *self.state.lock().unwrap() = State::Downloading { done: 0, total: release.exe.as_ref().map_or(0, |e| e.1) };
         let (state, ctx) = (self.state.clone(), ctx.clone());
         std::thread::spawn(move || {
-            let s = match download(&url, size, &state, &ctx) {
-                Ok(()) => State::Ready(release.version.clone()),
-                Err(e) => State::Failed(e, Some(release)),
-            };
+            let s = install_release(release, &state, &ctx);
             *state.lock().unwrap() = s;
             ctx.request_repaint();
         });
@@ -195,10 +222,21 @@ impl Updater {
 
     /// Draws the update window. `reopen` is passed to the restarted program.
     pub fn show(&mut self, ctx: &egui::Context, reopen: Option<&PathBuf>) {
+        let state = self.state.lock().unwrap().clone();
+        if self.background {
+            // a launch check only speaks up with something to act on
+            match state {
+                State::Available(_) | State::Ready(_) => {
+                    self.open = true;
+                    self.background = false;
+                }
+                State::UpToDate | State::Failed(..) => self.background = false,
+                State::Checking | State::Downloading { .. } => {}
+            }
+        }
         if !self.open {
             return;
         }
-        let state = self.state.lock().unwrap().clone();
         let mut open = self.open;
         let mut close = false;
         egui::Window::new(tr("🔄 Update"))
