@@ -5,8 +5,13 @@
 <h1 align="center">PDF Print Studio</h1>
 
 <p align="center">
-  Print PDFs and comic books exactly the way you want, on Windows.<br>
-  <a href="https://github.com/mberehulka/pdf-print-studio/releases/latest"><b>Download the latest release</b></a>
+  Print PDFs and comic books exactly the way you want, on Windows.
+</p>
+
+<p align="center">
+  <a href="https://github.com/mberehulka/pdf-print-studio/releases/latest/download/pdfprintstudio.exe"><img src="https://img.shields.io/badge/Download_for_Windows-pdfprintstudio.exe-1e62d6?style=for-the-badge&logo=windows&logoColor=white" alt="Download for Windows" height="36"></a>
+  <br>
+  <a href="https://github.com/mberehulka/pdf-print-studio/releases/latest"><img src="https://img.shields.io/github/v/release/mberehulka/pdf-print-studio?label=latest&color=54aaff" alt="Latest version"></a>
 </p>
 
 ![Print preview with two pages per sheet, header, footer and a DRAFT watermark](docs/screenshots/preview.png)
@@ -49,7 +54,7 @@ from your Windows settings), and a default window size and position.
 
 ## Install
 
-1. Download `pdfprintstudio.exe` from the [latest release](https://github.com/mberehulka/pdf-print-studio/releases/latest) and run it.
+1. [Download `pdfprintstudio.exe`](https://github.com/mberehulka/pdf-print-studio/releases/latest/download/pdfprintstudio.exe) and run it.
 2. Open **⚙ Settings → Installation**. With one click each, you can:
    - install the program (Start menu entry, and an uninstall entry in Windows Settings → Apps),
    - add it to Explorer's **Open with** menu for PDF and CBZ files (page thumbnails in Explorer keep working),
