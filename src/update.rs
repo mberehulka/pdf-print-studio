@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// GitHub "owner/repository" whose releases carry the Windows binary.
-pub const REPO: &str = "murielberehulka/pdf-print-studio";
+pub const REPO: &str = "mberehulka/pdf-print-studio";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 const USER_AGENT: &str = concat!("pdf-print-studio/", env!("CARGO_PKG_VERSION"));
 

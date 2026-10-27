@@ -22,7 +22,7 @@ It is a single `.exe` with no external DLLs. Pages are rendered by the PDF engin
 
 ## Install
 
-1. Download `pdfprintstudio.exe` from the [latest release](https://github.com/murielberehulka/pdf-print-studio/releases/latest).
+1. Download `pdfprintstudio.exe` from the [latest release](https://github.com/mberehulka/pdf-print-studio/releases/latest).
 2. Run it and open **⚙ Settings → Installation**:
    - **Program**: copies the app to `%LOCALAPPDATA%\PdfPrintStudio` and adds a Start menu entry and an *Apps & features* entry.
    - **"Open with" for PDF files**: lists the app in Explorer's *Open with* menu.

@@ -3,7 +3,7 @@ name = "pdf-print-studio"
 version = "0.1.0"
 edition = "2021"
 description = "Advanced PDF printing tool with Explorer context-menu integration"
-repository = "https://github.com/murielberehulka/pdf-print-studio"
+repository = "https://github.com/mberehulka/pdf-print-studio"
 
 [[bin]]
 name = "pdfprintstudio"
