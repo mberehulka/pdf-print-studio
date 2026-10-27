@@ -6,13 +6,15 @@ use crate::trf;
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
-use winreg::enums::HKEY_CURRENT_USER;
+use winreg::enums::{HKEY_CLASSES_ROOT, HKEY_CURRENT_USER};
 use winreg::RegKey;
 
-const SHELL_KEY: &str = r"Software\Classes\SystemFileAssociations\.pdf\shell";
+/// File types the app registers for.
+const EXTS: [&str; 2] = ["pdf", "cbz"];
 const VERB_MAIN: &str = "PdfPrintStudio";
 const VERB_QUICK: &str = "PdfPrintStudioQuick";
-const PROG_ID: &str = "PdfPrintStudio.pdf";
+/// Shell extensions Explorer uses for thumbnails and the preview pane.
+const SHELLEX: [&str; 2] = ["{e357fccd-a995-4576-b01f-234630154e96}", "{8895b1c6-b41f-4c1c-a562-0d564250836f}"];
 const APP_KEY: &str = r"Software\Classes\Applications\pdfprintstudio.exe";
 const CAPS_KEY: &str = r"Software\PdfPrintStudio\Capabilities";
 const UNINSTALL_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\PdfPrintStudio";
@@ -61,6 +63,14 @@ fn start_menu_link() -> PathBuf {
         .join(r"Microsoft\Windows\Start Menu\Programs\PDF Print Studio.lnk")
 }
 
+fn shell_key(ext: &str) -> String {
+    format!(r"Software\Classes\SystemFileAssociations\.{ext}\shell")
+}
+
+fn prog_id(ext: &str) -> String {
+    format!("PdfPrintStudio.{ext}")
+}
+
 fn hkcu() -> RegKey {
     RegKey::predef(HKEY_CURRENT_USER)
 }
@@ -96,8 +106,8 @@ pub struct Status {
 pub fn status() -> Status {
     Status {
         program: installed_exe().exists() && has_key(UNINSTALL_KEY),
-        open_with: has_key(&format!(r"Software\Classes\{PROG_ID}\shell\open\command")),
-        context_menu: has_key(&format!(r"{SHELL_KEY}\{VERB_MAIN}\command")),
+        open_with: has_key(&format!(r"Software\Classes\{}\shell\open\command", prog_id("pdf"))),
+        context_menu: has_key(&format!(r"{}\{VERB_MAIN}\command", shell_key("pdf"))),
     }
 }
 
@@ -178,29 +188,59 @@ fn ensure_installed() -> Result<String, String> {
 
 // ---------------------------------------------------------------- "Open with"
 
+/// The handler (CLSID) another program registered for `ext` under `shellex`, so files keep their
+/// page thumbnails and preview pane when this app becomes the default.
+fn existing_shellex(ext: &str, shellex: &str) -> Option<String> {
+    let root = RegKey::predef(HKEY_CLASSES_ROOT);
+    let mut keys = vec![format!(r".{ext}\ShellEx\{shellex}"), format!(r"SystemFileAssociations\.{ext}\ShellEx\{shellex}")];
+    let mut prog_ids: Vec<String> = Vec::new();
+    if let Ok(k) = hkcu().open_subkey(format!(r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.{ext}\UserChoice")) {
+        prog_ids.extend(k.get_value::<String, _>("ProgId").ok());
+    }
+    if let Ok(k) = root.open_subkey(format!(".{ext}")) {
+        prog_ids.extend(k.get_value::<String, _>("").ok());
+    }
+    if let Ok(k) = root.open_subkey(format!(r".{ext}\OpenWithProgids")) {
+        prog_ids.extend(k.enum_values().flatten().map(|(name, _)| name));
+    }
+    keys.extend(prog_ids.iter().filter(|p| !p.starts_with("PdfPrintStudio.")).map(|p| format!(r"{p}\ShellEx\{shellex}")));
+    keys.iter().find_map(|k| root.open_subkey(k).ok()?.get_value::<String, _>("").ok().filter(|v| !v.is_empty()))
+}
+
 pub fn register_open_with() -> Result<String, String> {
     let t = ensure_installed()?;
     let open = format!("\"{t}\" \"%1\"");
     let icon = format!("{t},0");
 
-    let prog = create(&format!(r"Software\Classes\{PROG_ID}"))?;
-    set(&prog, "", "PDF")?;
-    set(&prog, "FriendlyTypeName", "PDF")?;
-    set(&create(&format!(r"Software\Classes\{PROG_ID}\DefaultIcon"))?, "", &icon)?;
-    set(&create(&format!(r"Software\Classes\{PROG_ID}\shell\open\command"))?, "", &open)?;
-    set(&create(r"Software\Classes\.pdf\OpenWithProgids")?, PROG_ID, "")?;
-
     let app = create(APP_KEY)?;
     set(&app, "FriendlyAppName", APP_NAME)?;
-    set(&create(&format!(r"{APP_KEY}\SupportedTypes"))?, ".pdf", "")?;
     set(&create(&format!(r"{APP_KEY}\shell\open\command"))?, "", &open)?;
+    set(&create(&format!(r"{APP_KEY}\DefaultIcon"))?, "", &icon)?;
 
     // lets the app show up in Settings → Default apps
     let caps = create(CAPS_KEY)?;
     set(&caps, "ApplicationName", APP_NAME)?;
-    set(&caps, "ApplicationDescription", "Advanced PDF printing")?;
-    set(&create(&format!(r"{CAPS_KEY}\FileAssociations"))?, ".pdf", PROG_ID)?;
+    set(&caps, "ApplicationDescription", "Advanced PDF and comic book printing")?;
+    set(&caps, "ApplicationIcon", &icon)?;
     set(&create(r"Software\RegisteredApplications")?, APP_NAME, CAPS_KEY)?;
+
+    for ext in EXTS {
+        let id = prog_id(ext);
+        let kind = if ext == "pdf" { "PDF" } else { "Comic book (CBZ)" };
+        let prog = create(&format!(r"Software\Classes\{id}"))?;
+        set(&prog, "", kind)?;
+        set(&prog, "FriendlyTypeName", kind)?;
+        set(&create(&format!(r"Software\Classes\{id}\DefaultIcon"))?, "", &icon)?;
+        set(&create(&format!(r"Software\Classes\{id}\shell\open\command"))?, "", &open)?;
+        for shellex in SHELLEX {
+            if let Some(clsid) = existing_shellex(ext, shellex) {
+                set(&create(&format!(r"Software\Classes\{id}\ShellEx\{shellex}"))?, "", &clsid)?;
+            }
+        }
+        set(&create(&format!(r"Software\Classes\.{ext}\OpenWithProgids"))?, &id, "")?;
+        set(&create(&format!(r"{APP_KEY}\SupportedTypes"))?, &format!(".{ext}"), "")?;
+        set(&create(&format!(r"{CAPS_KEY}\FileAssociations"))?, &format!(".{ext}"), &id)?;
+    }
 
     notify_shell();
     Ok(tr("\"Open with\" registered.").into())
@@ -208,12 +248,15 @@ pub fn register_open_with() -> Result<String, String> {
 
 pub fn unregister_open_with() -> Result<String, String> {
     let h = hkcu();
-    let _ = h.delete_subkey_all(format!(r"Software\Classes\{PROG_ID}"));
+    for ext in EXTS {
+        let id = prog_id(ext);
+        let _ = h.delete_subkey_all(format!(r"Software\Classes\{id}"));
+        if let Ok(k) = h.open_subkey_with_flags(format!(r"Software\Classes\.{ext}\OpenWithProgids"), winreg::enums::KEY_WRITE) {
+            let _ = k.delete_value(&id);
+        }
+    }
     let _ = h.delete_subkey_all(APP_KEY);
     let _ = h.delete_subkey_all(r"Software\PdfPrintStudio");
-    if let Ok(k) = h.open_subkey_with_flags(r"Software\Classes\.pdf\OpenWithProgids", winreg::enums::KEY_WRITE) {
-        let _ = k.delete_value(PROG_ID);
-    }
     if let Ok(k) = h.open_subkey_with_flags(r"Software\RegisteredApplications", winreg::enums::KEY_WRITE) {
         let _ = k.delete_value(APP_NAME);
     }
@@ -234,20 +277,25 @@ pub fn install_context_menu() -> Result<String, String> {
         (VERB_MAIN, tr("Print with PDF Print Studio…"), format!("\"{t}\" \"%1\"")),
         (VERB_QUICK, tr("Quick print (last settings)"), format!("\"{t}\" --quick \"%1\"")),
     ];
-    for (verb, label, cmd) in verbs {
-        let key = create(&format!(r"{SHELL_KEY}\{verb}"))?;
-        set(&key, "", label)?;
-        set(&key, "MUIVerb", label)?;
-        set(&key, "Icon", "shell32.dll,16")?;
-        set(&create(&format!(r"{SHELL_KEY}\{verb}\command"))?, "", &cmd)?;
+    for ext in EXTS {
+        let shell = shell_key(ext);
+        for (verb, label, cmd) in &verbs {
+            let key = create(&format!(r"{shell}\{verb}"))?;
+            set(&key, "", label)?;
+            set(&key, "MUIVerb", label)?;
+            set(&key, "Icon", &format!("{t},0"))?;
+            set(&create(&format!(r"{shell}\{verb}\command"))?, "", cmd)?;
+        }
     }
     notify_shell();
     Ok(tr("Context menu installed.").into())
 }
 
 pub fn uninstall_context_menu() -> Result<String, String> {
-    for verb in [VERB_MAIN, VERB_QUICK] {
-        let _ = hkcu().delete_subkey_all(format!(r"{SHELL_KEY}\{verb}"));
+    for ext in EXTS {
+        for verb in [VERB_MAIN, VERB_QUICK] {
+            let _ = hkcu().delete_subkey_all(format!(r"{}\{verb}", shell_key(ext)));
+        }
     }
     notify_shell();
     Ok(tr("Context menu entries removed.").into())

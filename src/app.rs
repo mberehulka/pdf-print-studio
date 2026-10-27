@@ -15,7 +15,7 @@ use crate::text;
 use crate::theme::{self, pal, ACCENT};
 use crate::trf;
 use crate::update::{self, Updater};
-use crate::worker::{self, Req, Resp};
+use crate::worker::{self, PageSrc, Req, Resp, WHOLE};
 use eframe::egui::{
     self, pos2, vec2, Align2, Color32, ColorImage, FontId, Key, RichText, Sense, Stroke, TextureHandle,
     TextureOptions, Ui,
@@ -37,6 +37,8 @@ pub fn run(file: Option<PathBuf>, quick: bool, prefs: Prefs) -> eframe::Result<(
     if let Some(p) = prefs.window_pos {
         viewport = viewport.with_position(p);
     }
+    let (rgba, width, height) = icon_rgba();
+    viewport = viewport.with_icon(std::sync::Arc::new(egui::IconData { rgba, width, height }));
     let opts = eframe::NativeOptions { viewport, centered: prefs.window_pos.is_none(), ..Default::default() };
     eframe::run_native(
         "PDF Print Studio",
@@ -46,6 +48,13 @@ pub fn run(file: Option<PathBuf>, quick: bool, prefs: Prefs) -> eframe::Result<(
 }
 
 const MIN_WINDOW: [f32; 2] = [1100.0, 650.0];
+
+/// The app icon as RGBA pixels.
+fn icon_rgba() -> (Vec<u8>, u32, u32) {
+    let img = image::load_from_memory(include_bytes!("../assets/icon.png")).expect("embedded icon").to_rgba8();
+    let (w, h) = img.dimensions();
+    (img.into_raw(), w, h)
+}
 
 #[derive(PartialEq, Clone, Copy)]
 enum Tab {
@@ -69,7 +78,21 @@ pub struct App {
     password: String,
     need_password: bool,
     open_error: Option<String>,
+    /// Sizes of the arranged pages (what the rest of the app calls "pages").
     sizes_mm: Vec<(f32, f32)>,
+    /// Sizes of the pages in the PDF file.
+    src_sizes: Vec<(f32, f32)>,
+    /// Page arrangement: which PDF page (or part of one) each page is.
+    order: Vec<PageSrc>,
+    history: Vec<Vec<PageSrc>>,
+    /// Thumbnail being dragged.
+    drag: Option<usize>,
+    /// The open document is a comic book archive.
+    is_cbz: bool,
+    cbz_meta: Vec<(String, String)>,
+    /// CBZ options the open archive was loaded / arranged with.
+    cbz_load_key: String,
+    cbz_arrange_key: String,
     loading: bool,
 
     thumbs: HashMap<usize, TextureHandle>,
@@ -121,6 +144,8 @@ pub struct App {
     inst: install::Status,
     prefs: Prefs,
     prefs_open: bool,
+    prefs_tab: PrefsTab,
+    logo: TextureHandle,
     updater: Updater,
     manual: Manual,
     hwnd: isize,
@@ -145,6 +170,14 @@ impl App {
             need_password: false,
             open_error: None,
             sizes_mm: Vec::new(),
+            src_sizes: Vec::new(),
+            order: Vec::new(),
+            history: Vec::new(),
+            drag: None,
+            is_cbz: false,
+            cbz_meta: Vec::new(),
+            cbz_load_key: String::new(),
+            cbz_arrange_key: String::new(),
             loading: false,
             thumbs: HashMap::new(),
             thumb_req: HashSet::new(),
@@ -188,6 +221,11 @@ impl App {
             inst: install::status(),
             prefs,
             prefs_open: false,
+            prefs_tab: PrefsTab::General,
+            logo: {
+                let (rgba, w, h) = icon_rgba();
+                cc.egui_ctx.load_texture("logo", ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba), TextureOptions::LINEAR)
+            },
             updater: Updater::default(),
             manual: Manual::default(),
             hwnd: 0,
@@ -205,6 +243,8 @@ impl App {
     fn open(&mut self, path: PathBuf) {
         self.path = Some(path.clone());
         self.sizes_mm.clear();
+        self.order.clear();
+        self.history.clear();
         self.thumbs.clear();
         self.thumb_req.clear();
         self.picked.clear();
@@ -218,7 +258,8 @@ impl App {
         self.open_error = None;
         self.loading = true;
         let pw = (!self.password.is_empty()).then(|| self.password.clone());
-        let _ = self.tx.send(Req::Open { path, password: pw });
+        self.cbz_load_key = self.s.cbz.load_key();
+        let _ = self.tx.send(Req::Open { path, password: pw, cbz: self.s.cbz.clone() });
     }
 
     fn file_name(&self) -> String {
@@ -235,7 +276,16 @@ impl App {
                 Resp::Opened(info) => {
                     self.loading = false;
                     self.need_password = false;
-                    self.sizes_mm = info.sizes_mm;
+                    self.order = PageSrc::identity(info.sizes_mm.len());
+                    self.sizes_mm = info.sizes_mm.clone();
+                    self.src_sizes = info.sizes_mm;
+                    self.history.clear();
+                    self.is_cbz = info.cbz;
+                    self.cbz_meta = info.meta;
+                    self.cbz_arrange_key.clear();
+                    if self.is_cbz && self.cbz_meta.iter().any(|(k, v)| k == "Manga" && v == "YesAndRightToLeft") {
+                        self.set_rtl(true);
+                    }
                     self.path = Some(info.path);
                     self.layout_key.clear();
                 }
@@ -451,6 +501,7 @@ impl App {
             path,
             password: (!self.password.is_empty()).then(|| self.password.clone()),
             settings: self.s.clone(),
+            order: self.order.clone(),
             selection: sel,
             landscape: self.landscape,
             target,
@@ -674,6 +725,7 @@ impl eframe::App for App {
         }
         self.poll_worker(ctx);
         self.poll_job(ctx);
+        self.cbz_sync(ctx);
         self.recompute();
 
         // drag & drop
@@ -718,6 +770,9 @@ impl App {
         }
         if ctx.wants_keyboard_input() {
             return;
+        }
+        if ctx.input(|i| i.modifiers.command && i.key_pressed(Key::Z)) {
+            self.undo();
         }
         let (next, prev, home, end, print) = ctx.input(|i| {
             (
@@ -772,10 +827,11 @@ impl App {
     fn ui_top(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("top").exact_height(42.0).show(ctx, |ui| {
             ui.horizontal_centered(|ui| {
-                ui.label(RichText::new("🖨 PDF Print Studio").strong().size(17.0).color(ACCENT));
+                ui.add(egui::Image::new(&self.logo).fit_to_exact_size(vec2(24.0, 24.0)));
+                ui.label(RichText::new("PDF Print Studio").strong().size(17.0).color(ACCENT));
                 ui.separator();
                 if ui.button(tr("📂 Open…")).clicked() {
-                    if let Some(p) = rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file() {
+                    if let Some(p) = rfd::FileDialog::new().add_filter(tr("PDF or comic book (CBZ)"), &["pdf", "cbz"]).pick_file() {
                         self.password.clear();
                         self.open(p);
                     }
@@ -845,10 +901,33 @@ impl App {
     fn ui_thumbs(&mut self, ctx: &egui::Context) {
         egui::SidePanel::left("thumbs").resizable(true).default_width(190.0).width_range(130.0..=340.0).show(ctx, |ui| {
             ui.add_space(4.0);
+            let mut op = None;
             ui.horizontal(|ui| {
                 ui.label(RichText::new(tr("Pages")).strong());
-                hint(ui, tr("click = view · ctrl+click = pick"));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.menu_button("⋯", |ui| {
+                        if ui.button(tr("✂ Split all pages in half")).clicked() {
+                            op = Some(PageOp::SplitAll);
+                            ui.close_menu();
+                        }
+                        if ui.add_enabled(!self.picked.is_empty(), egui::Button::new(trf!("🗑 Delete picked pages ({})", self.picked.len()))).clicked() {
+                            op = Some(PageOp::DeletePicked);
+                            ui.close_menu();
+                        }
+                        if ui.add_enabled(self.arranged(), egui::Button::new(tr("⟲ Restore original pages"))).clicked() {
+                            op = Some(PageOp::Reset);
+                            ui.close_menu();
+                        }
+                    });
+                    if ui.add_enabled(!self.history.is_empty(), egui::Button::new("↶").small()).on_hover_text(tr("Undo (Ctrl+Z)")).clicked() {
+                        self.undo();
+                    }
+                });
             });
+            hint(ui, tr("drag = move · right-click = edit · ctrl+click = pick"));
+            if self.arranged() {
+                ui.label(RichText::new(tr("Pages rearranged — for printing only, the PDF file is not changed.")).small().color(pal().info));
+            }
             ui.add_space(2.0);
             let n = self.sizes_mm.len();
             let w = (ui.available_width() - 14.0).max(60.0);
@@ -859,16 +938,36 @@ impl App {
                 scroll = scroll.vertical_scroll_offset(((row_h + spacing) * self.current as f32 - 120.0).max(0.0));
                 self.scroll_thumb = false;
             }
+            let pointer = ui.input(|i| i.pointer.interact_pos());
+            let released = ui.input(|i| i.pointer.any_released());
+            let mut drop_at = None;
             scroll.show_rows(ui, row_h, n, |ui, range| {
-                for i in range {
-                    if !self.thumbs.contains_key(&i) && self.thumb_req.insert(i) {
-                        let _ = self.tx.send(Req::Thumb { page: i, width: THUMB_W });
+                // auto-scroll while dragging near the top or bottom edge
+                if let (Some(_), Some(p)) = (self.drag, pointer) {
+                    let clip = ui.clip_rect();
+                    if p.y < clip.top() + 40.0 {
+                        ui.scroll_with_delta(vec2(0.0, 10.0));
+                    } else if p.y > clip.bottom() - 40.0 {
+                        ui.scroll_with_delta(vec2(0.0, -10.0));
                     }
-                    let (rect, resp) = ui.allocate_exact_size(vec2(w, row_h), Sense::click());
-                    let p = ui.painter_at(rect);
+                    ui.ctx().request_repaint();
+                }
+                for i in range {
+                    let src = self.order[i];
+                    if let PageSrc::Pdf(s, _) = src {
+                        if !self.thumbs.contains_key(&s) && self.thumb_req.insert(s) {
+                            let _ = self.tx.send(Req::Thumb { page: s, width: THUMB_W });
+                        }
+                    }
+                    let (rect, resp) = ui.allocate_exact_size(vec2(w, row_h), Sense::click_and_drag());
+                    if resp.drag_started() {
+                        self.drag = Some(i);
+                    }
+                    let p = ui.painter_at(rect.expand(3.0));
                     let is_cur = i == self.current;
                     let in_sel = self.sel_set.contains(&i);
                     let picked = self.picked.contains(&i);
+                    let dragged = self.drag == Some(i);
                     if is_cur {
                         p.rect_filled(rect, 6.0, ACCENT.linear_multiply(0.18));
                     } else if resp.hovered() {
@@ -880,10 +979,19 @@ impl App {
                     let sz = vec2(pw * k, ph * k);
                     let r = egui::Rect::from_center_size(img_area.center(), sz);
                     p.rect_filled(r.translate(vec2(2.0, 2.0)), 1.0, Color32::from_black_alpha(90));
-                    if let Some(t) = self.thumbs.get(&i) {
-                        p.image(t.id(), r, egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), if in_sel { Color32::WHITE } else { Color32::from_gray(110) });
-                    } else {
-                        p.rect_filled(r, 1.0, Color32::from_gray(200));
+                    let tint = if dragged { Color32::from_gray(90) } else if in_sel { Color32::WHITE } else { Color32::from_gray(110) };
+                    match src {
+                        PageSrc::Pdf(s, reg) => match self.thumbs.get(&s) {
+                            Some(t) => {
+                                p.image(t.id(), r, egui::Rect::from_min_max(pos2(reg[0], reg[1]), pos2(reg[2], reg[3])), tint);
+                            }
+                            None => {
+                                p.rect_filled(r, 1.0, Color32::from_gray(200));
+                            }
+                        },
+                        PageSrc::Blank(..) => {
+                            p.rect_filled(r, 1.0, tint);
+                        }
                     }
                     let border = if picked { Color32::from_rgb(255, 190, 60) } else if is_cur { ACCENT } else { pal().thumb_border };
                     p.rect_stroke(r, 1.0, Stroke::new(if picked || is_cur { 2.0_f32 } else { 1.0 }, border));
@@ -894,6 +1002,15 @@ impl App {
                     }
                     if picked {
                         p.text(pos2(r.left() + 4.0, r.top() + 4.0), Align2::LEFT_TOP, "★", FontId::proportional(13.0), Color32::from_rgb(255, 190, 60));
+                    }
+                    // drop target: insertion line above or below this page
+                    if let (Some(_), Some(ptr)) = (self.drag, pointer) {
+                        if rect.contains(ptr) {
+                            let before = ptr.y < rect.center().y;
+                            drop_at = Some(if before { i } else { i + 1 });
+                            let y = if before { rect.top() - 1.0 } else { rect.bottom() + 1.0 };
+                            p.line_segment([pos2(rect.left() + 4.0, y), pos2(rect.right() - 4.0, y)], Stroke::new(3.0_f32, ACCENT));
+                        }
                     }
                     if resp.clicked() {
                         if ui.input(|i| i.modifiers.command) {
@@ -911,11 +1028,242 @@ impl App {
                     if resp.double_clicked() {
                         self.tab = Tab::Viewer;
                     }
-                    resp.on_hover_text(trf!("Page {} — {:.0} × {:.0} mm", i + 1, pw, ph));
+                    let landscape = pw > ph;
+                    resp.context_menu(|ui| {
+                        if let Some(o) = page_menu(ui, i, n, landscape) {
+                            op = Some(o);
+                        }
+                    });
+                    if self.drag.is_none() {
+                        let tip = match src {
+                            PageSrc::Blank(..) => trf!("Page {} — blank, {:.0} × {:.0} mm", i + 1, pw, ph),
+                            _ => trf!("Page {} — {:.0} × {:.0} mm", i + 1, pw, ph),
+                        };
+                        resp.on_hover_text(tip);
+                    }
                 }
             });
+            if let Some(from) = self.drag {
+                if let Some(ptr) = pointer {
+                    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("page_drag")));
+                    let label = trf!("Page {}", from + 1);
+                    let galley = painter.layout_no_wrap(label, FontId::proportional(13.0), Color32::WHITE);
+                    let box_rect = egui::Rect::from_min_size(ptr + vec2(14.0, 6.0), galley.size() + vec2(12.0, 6.0));
+                    painter.rect_filled(box_rect, 4.0, ACCENT);
+                    painter.galley(box_rect.min + vec2(6.0, 3.0), galley, Color32::WHITE);
+                }
+                if released {
+                    self.drag = None;
+                    if let Some(to) = drop_at {
+                        op = Some(PageOp::Move(from, to));
+                    }
+                }
+            }
+            if let Some(o) = op {
+                self.apply_op(o);
+            }
         });
     }
+
+    // ------------------------------------------------------------ page arrangement
+
+    fn arranged(&self) -> bool {
+        self.order != PageSrc::identity(self.src_sizes.len())
+    }
+
+    /// Install a new arrangement (undoable) and pass it on to the worker.
+    fn set_order(&mut self, order: Vec<PageSrc>) {
+        if order == self.order {
+            return;
+        }
+        self.history.push(std::mem::replace(&mut self.order, order));
+        if self.history.len() > 100 {
+            self.history.remove(0);
+        }
+        self.sync_order();
+    }
+
+    fn undo(&mut self) {
+        if let Some(prev) = self.history.pop() {
+            self.order = prev;
+            self.picked.clear();
+            self.sync_order();
+        }
+    }
+
+    fn sync_order(&mut self) {
+        self.sizes_mm = self.order.iter().map(|p| p.size_mm(&self.src_sizes)).collect();
+        let _ = self.tx.send(Req::Arrange(self.order.clone()));
+        self.current = self.current.min(self.order.len().saturating_sub(1));
+        self.picked.retain(|&p| p < self.order.len());
+        if self.picked.is_empty() && self.s.range_mode == RangeMode::Picked {
+            self.s.range_mode = RangeMode::All;
+        }
+        self.layout_key.clear();
+        self.preview_key.clear();
+    }
+
+    fn apply_op(&mut self, op: PageOp) {
+        let mut o = self.order.clone();
+        let n = o.len();
+        match op {
+            PageOp::Move(from, to) => {
+                if from >= n {
+                    return;
+                }
+                let page = o.remove(from);
+                let to = if to > from { to - 1 } else { to }.min(o.len());
+                o.insert(to, page);
+                self.current = to;
+            }
+            PageOp::Delete(i) => {
+                if n <= 1 || i >= n {
+                    return;
+                }
+                o.remove(i);
+            }
+            PageOp::DeletePicked => {
+                let keep: Vec<PageSrc> = o.iter().enumerate().filter(|(i, _)| !self.picked.contains(i)).map(|(_, p)| *p).collect();
+                if keep.is_empty() {
+                    self.notify(tr("At least one page has to remain"), true);
+                    return;
+                }
+                o = keep;
+                self.current = 0;
+            }
+            PageOp::Duplicate(i) => {
+                o.insert(i + 1, o[i]);
+                self.current = i + 1;
+            }
+            PageOp::InsertBlank(i) => {
+                let (w, h) = o[i].size_mm(&self.src_sizes);
+                o.insert(i + 1, PageSrc::Blank(w, h));
+                self.current = i + 1;
+            }
+            PageOp::Split(i) => {
+                let halves = o[i].split(&self.src_sizes);
+                o.splice(i..=i, halves);
+            }
+            PageOp::SplitAll => {
+                o = o.iter().flat_map(|p| p.split(&self.src_sizes)).collect();
+            }
+            PageOp::Reset => o = PageSrc::identity(self.src_sizes.len()),
+        }
+        // page positions changed, so picks would point at other pages
+        self.picked.clear();
+        self.set_order(o);
+    }
+}
+
+#[derive(Clone, Copy)]
+enum PageOp {
+    /// Move the page at `.0` so it lands before the page now at `.1`.
+    Move(usize, usize),
+    Delete(usize),
+    DeletePicked,
+    Duplicate(usize),
+    InsertBlank(usize),
+    Split(usize),
+    SplitAll,
+    Reset,
+}
+
+/// Right-click menu of a thumbnail.
+fn page_menu(ui: &mut Ui, i: usize, n: usize, landscape: bool) -> Option<PageOp> {
+    let mut op = None;
+    let mut item = |ui: &mut Ui, enabled: bool, label: &str, o: PageOp| {
+        if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+            op = Some(o);
+            ui.close_menu();
+        }
+    };
+    item(ui, true, tr("⧉ Duplicate"), PageOp::Duplicate(i));
+    item(ui, true, tr("➕ Insert blank page after"), PageOp::InsertBlank(i));
+    let split = if landscape { tr("✂ Split into left and right halves") } else { tr("✂ Split into top and bottom halves") };
+    item(ui, true, split, PageOp::Split(i));
+    ui.separator();
+    item(ui, i > 0, tr("⏫ Move to start"), PageOp::Move(i, 0));
+    item(ui, i > 0, tr("🔼 Move up"), PageOp::Move(i, i - usize::from(i > 0)));
+    item(ui, i + 1 < n, tr("🔽 Move down"), PageOp::Move(i, i + 2));
+    item(ui, i + 1 < n, tr("⏬ Move to end"), PageOp::Move(i, n));
+    ui.separator();
+    item(ui, n > 1, tr("🗑 Delete"), PageOp::Delete(i));
+    op
+}
+
+/// Millimetre rulers along the top and left edge of the visible area, aligned to `paper`.
+fn draw_rulers(ui: &Ui, paper: egui::Rect, paper_mm: (f32, f32)) {
+    const R: f32 = 20.0;
+    let view = ui.clip_rect();
+    let k = paper.width() / paper_mm.0.max(1.0);
+    if !k.is_finite() || k <= 0.0 {
+        return;
+    }
+    let p = ui.painter().with_clip_rect(view);
+    let vis = ui.visuals();
+    let (bg, paper_bg, fg) = (vis.faint_bg_color, vis.extreme_bg_color, vis.text_color());
+    let tick = vis.weak_text_color();
+    let line = vis.widgets.noninteractive.bg_stroke;
+    let top = egui::Rect::from_min_size(view.min, vec2(view.width(), R));
+    let left = egui::Rect::from_min_size(view.min, vec2(R, view.height()));
+    p.rect_filled(top, 0.0, bg);
+    p.rect_filled(left, 0.0, bg);
+    p.rect_filled(egui::Rect::from_x_y_ranges(paper.x_range(), top.y_range()), 0.0, paper_bg);
+    p.rect_filled(egui::Rect::from_x_y_ranges(left.x_range(), paper.y_range()), 0.0, paper_bg);
+
+    let label_step = [5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0].into_iter().find(|s| s * k >= 48.0).unwrap_or(2000.0);
+    let minor = [label_step / 10.0, label_step / 5.0, label_step / 2.0, label_step].into_iter().find(|s| s * k >= 5.0).unwrap_or(label_step);
+    let font = FontId::proportional(9.5);
+    let is_mult = |v: f32, step: f32| ((v / step).round() * step - v).abs() < 1e-3;
+
+    // horizontal
+    let first = ((view.left() + R - paper.left()) / k / minor).floor() as i64;
+    let last = ((view.right() - paper.left()) / k / minor).ceil() as i64;
+    for t in first..=last {
+        let v = t as f32 * minor;
+        let x = paper.left() + v * k;
+        if x < view.left() + R {
+            continue;
+        }
+        let len = if is_mult(v, label_step) { 0.55 } else if is_mult(v, label_step / 2.0) { 0.38 } else { 0.22 } * R;
+        p.line_segment([pos2(x, top.bottom() - len), pos2(x, top.bottom())], Stroke::new(1.0_f32, tick));
+        if is_mult(v, label_step) {
+            p.text(pos2(x + 2.0, top.top() + 1.0), Align2::LEFT_TOP, format!("{}", v.round() as i64), font.clone(), fg);
+        }
+    }
+    // vertical
+    let first = ((view.top() + R - paper.top()) / k / minor).floor() as i64;
+    let last = ((view.bottom() - paper.top()) / k / minor).ceil() as i64;
+    for t in first..=last {
+        let v = t as f32 * minor;
+        let y = paper.top() + v * k;
+        if y < view.top() + R {
+            continue;
+        }
+        let len = if is_mult(v, label_step) { 0.55 } else if is_mult(v, label_step / 2.0) { 0.38 } else { 0.22 } * R;
+        p.line_segment([pos2(left.right() - len, y), pos2(left.right(), y)], Stroke::new(1.0_f32, tick));
+        if is_mult(v, label_step) {
+            p.text(pos2(left.left() + 1.0, y + 1.0), Align2::LEFT_TOP, format!("{}", v.round() as i64), font.clone(), fg);
+        }
+    }
+    p.line_segment([pos2(view.left(), top.bottom()), pos2(view.right(), top.bottom())], line);
+    p.line_segment([pos2(left.right(), view.top()), pos2(left.right(), view.bottom())], line);
+    p.rect_filled(egui::Rect::from_min_size(view.min, vec2(R, R)), 0.0, bg);
+    p.text(view.min + vec2(R / 2.0, R / 2.0), Align2::CENTER_CENTER, "mm", FontId::proportional(8.5), tick);
+
+    // pointer position on both rulers
+    if let Some(h) = ui.ctx().pointer_hover_pos().filter(|h| view.contains(*h)) {
+        let s = Stroke::new(1.5_f32, ACCENT);
+        if h.x > view.left() + R {
+            p.line_segment([pos2(h.x, top.top()), pos2(h.x, top.bottom())], s);
+        }
+        if h.y > view.top() + R {
+            p.line_segment([pos2(left.left(), h.y), pos2(left.right(), h.y)], s);
+        }
+    }
+}
+
+impl App {
 
     // ------------------------------------------------------------ central
 
@@ -947,11 +1295,11 @@ impl App {
                 ui.label(tr("Opening document…"));
                 return;
             }
-            ui.label(RichText::new("🖨").size(64.0).color(ACCENT));
-            ui.label(RichText::new(tr("Drop a PDF here or open one")).size(22.0));
+            ui.add(egui::Image::new(&self.logo).fit_to_exact_size(vec2(96.0, 96.0)));
+            ui.label(RichText::new(tr("Drop a PDF or comic book (CBZ) here, or open one")).size(22.0));
             ui.add_space(10.0);
-            if ui.add(egui::Button::new(RichText::new(tr("📂  Open PDF…")).size(16.0)).min_size(vec2(180.0, 36.0))).clicked() {
-                if let Some(p) = rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file() {
+            if ui.add(egui::Button::new(RichText::new(tr("📂  Open file…")).size(16.0)).min_size(vec2(180.0, 36.0))).clicked() {
+                if let Some(p) = rfd::FileDialog::new().add_filter(tr("PDF or comic book (CBZ)"), &["pdf", "cbz"]).pick_file() {
                     self.open(p);
                 }
             }
@@ -994,7 +1342,8 @@ impl App {
                         tr("single-sided")
                     };
                     let pages = sh.pages().iter().map(|p| (p + 1).to_string()).collect::<Vec<_>>().join(", ");
-                    ui.label(RichText::new(trf!("{} · pages {}", side, pages)).color(Color32::GRAY));
+                    // page list only on hover: with many pages per sheet it would push the controls off the toolbar
+                    ui.label(RichText::new(side).color(Color32::GRAY)).on_hover_text(trf!("{} · pages {}", side, pages));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button(tr("Fit")).clicked() {
@@ -1003,9 +1352,8 @@ impl App {
                     ui.add(egui::Slider::new(&mut self.preview_zoom, 0.5..=4.0).show_value(false).text(tr("Zoom")));
                     ui.checkbox(&mut self.show_cells, tr("Cells"));
                     ui.checkbox(&mut self.show_printable, tr("Printable area"));
-                    if let Some(c) = self.coverage {
-                        ui.label(RichText::new(trf!("≈ {:.1}% ink coverage", c)).color(pal().info))
-                            .on_hover_text(tr("Estimated toner/ink coverage of this side (5% is a typical text page)"));
+                    if ui.checkbox(&mut self.prefs.show_rulers, tr("Rulers")).changed() {
+                        self.prefs.save();
                     }
                 });
             });
@@ -1026,10 +1374,10 @@ impl App {
         egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
             let avail = ui.available_size();
             let (sw, sh) = self.sheet_mm;
-            let fit = ((avail.x - 48.0) / sw).min((avail.y - 48.0) / sh).max(0.05);
+            let fit = ((avail.x - 64.0) / sw).min((avail.y - 64.0) / sh).max(0.05);
             let k = fit * self.preview_zoom;
             let size = vec2(sw * k, sh * k);
-            let (outer, _) = ui.allocate_exact_size(vec2(size.x + 48.0, size.y + 48.0).max(avail), Sense::hover());
+            let (outer, _) = ui.allocate_exact_size(vec2(size.x + 64.0, size.y + 64.0).max(avail), Sense::hover());
             let rect = egui::Rect::from_center_size(outer.center(), size);
             let p = ui.painter();
             p.rect_filled(rect.translate(vec2(5.0, 6.0)), 2.0, pal().shadow);
@@ -1065,6 +1413,9 @@ impl App {
             }
             if self.preview_busy {
                 ui.put(egui::Rect::from_center_size(rect.right_top() + vec2(-18.0, 18.0), vec2(20.0, 20.0)), egui::Spinner::new());
+            }
+            if self.prefs.show_rulers {
+                draw_rulers(ui, rect, self.sheet_mm);
             }
             self.request_preview(size.y * ppp);
         });
@@ -1107,6 +1458,9 @@ impl App {
                     for (z, l) in [(2.0, "200%"), (1.5, "150%"), (1.0, tr("Fit width")), (0.5, "50%")] {
                         ui.selectable_value(&mut self.view_zoom, z, l);
                     }
+                    if ui.checkbox(&mut self.prefs.show_rulers, tr("Rulers")).changed() {
+                        self.prefs.save();
+                    }
                 });
             });
         });
@@ -1114,22 +1468,28 @@ impl App {
         egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
             let avail = ui.available_size();
             let (pw, ph) = self.sizes_mm[self.current];
-            let w = ((avail.x - 40.0) * self.view_zoom).max(100.0);
+            let pad = if self.prefs.show_rulers { 30.0 } else { 20.0 };
+            let w = ((avail.x - 2.0 * pad) * self.view_zoom).max(100.0);
             let h = w * ph / pw;
-            let (outer, _) = ui.allocate_exact_size(vec2(w + 40.0, h + 40.0).max(avail), Sense::hover());
-            let rect = egui::Rect::from_min_size(pos2(outer.center().x - w / 2.0, outer.min.y + 20.0), vec2(w, h));
+            let (outer, _) = ui.allocate_exact_size(vec2(w + 2.0 * pad, h + 2.0 * pad).max(avail), Sense::hover());
+            let rect = egui::Rect::from_min_size(pos2(outer.center().x - w / 2.0, outer.min.y + pad), vec2(w, h));
             let p = ui.painter();
             p.rect_filled(rect.translate(vec2(4.0, 5.0)), 2.0, pal().shadow);
             p.rect_filled(rect, 0.0, Color32::WHITE);
-            let tex = self.view_tex.as_ref().filter(|(pg, _)| *pg == self.current).map(|(_, t)| t.id());
-            let tex = tex.or_else(|| self.thumbs.get(&self.current).map(|t| t.id()));
-            if let Some(id) = tex {
-                p.image(id, rect, egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+            // the viewer shows the whole PDF page, cut to the part this page uses
+            if let PageSrc::Pdf(src, reg) = self.order[self.current] {
+                let tex = self.view_tex.as_ref().filter(|(pg, _)| *pg == src).map(|(_, t)| t.id());
+                if let Some(id) = tex.or_else(|| self.thumbs.get(&src).map(|t| t.id())) {
+                    p.image(id, rect, egui::Rect::from_min_max(pos2(reg[0], reg[1]), pos2(reg[2], reg[3])), Color32::WHITE);
+                }
+                let want = (((w * ppp / (reg[2] - reg[0]).max(0.05)) / 64.0).ceil() * 64.0).min(6000.0) as u32;
+                if self.view_req != Some((src, want)) {
+                    self.view_req = Some((src, want));
+                    let _ = self.tx.send(Req::View { page: src, width: want });
+                }
             }
-            let want = (((w * ppp) / 64.0).ceil() * 64.0).min(6000.0) as u32;
-            if self.view_req != Some((self.current, want)) {
-                self.view_req = Some((self.current, want));
-                let _ = self.tx.send(Req::View { page: self.current, width: want });
+            if self.prefs.show_rulers {
+                draw_rulers(ui, rect, (pw, ph));
             }
         });
     }
@@ -1144,6 +1504,9 @@ impl App {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 ui.add_space(6.0);
                 self.ui_printer(ui);
+                if self.is_cbz {
+                    self.ui_cbz(ui);
+                }
                 self.ui_pages(ui);
                 self.ui_layout(ui);
                 self.ui_sizing(ui);
@@ -2193,7 +2556,8 @@ impl App {
             physical
         )).strong());
         if let Some(c) = self.coverage {
-            hint(ui, &trf!("Current side ≈ {:.1}% coverage", c));
+            ui.label(RichText::new(trf!("Current side ≈ {:.1}% coverage", c)).small().color(pal().muted))
+                .on_hover_text(tr("Estimated toner/ink coverage of this side (5% is a typical text page)"));
         }
         ui.add_space(4.0);
         ui.horizontal(|ui| {
@@ -2316,6 +2680,15 @@ fn apply_window(ctx: &egui::Context, p: &Prefs) {
 
 type Toggle = fn() -> Result<String, String>;
 
+pub const AUTHOR: &str = "Muriel Guedes Pucci Berehulka";
+
+#[derive(Clone, Copy, PartialEq)]
+enum PrefsTab {
+    General,
+    Installation,
+    About,
+}
+
 impl App {
     fn ui_prefs(&mut self, ctx: &egui::Context) {
         if !self.prefs_open {
@@ -2333,150 +2706,169 @@ impl App {
             .default_width(480.0)
             .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                ui.label(RichText::new(tr("Appearance")).strong());
-                grid(ui, "prefs_look", |ui| {
-                    ui.label(tr("Language"));
-                    let system = trf!("System ({})", i18n::system_lang().native_name());
-                    let shown = match self.prefs.language {
-                        LangPref::System => system.clone(),
-                        LangPref::Fixed(l) => l.native_name().to_string(),
-                    };
-                    egui::ComboBox::from_id_salt("pref_lang").selected_text(shown).width(220.0).show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.prefs.language, LangPref::System, system)
-                            .on_hover_text(tr("Follows the Windows regional format"));
-                        for l in [Lang::English, Lang::PortugueseBr] {
-                            ui.selectable_value(&mut self.prefs.language, LangPref::Fixed(l), l.native_name());
-                        }
-                    });
-                    ui.end_row();
-                    ui.label(tr("Theme"));
-                    ui.horizontal(|ui| {
-                        ui.selectable_value(&mut self.prefs.theme, Theme::Light, tr("☀ Light"));
-                        ui.selectable_value(&mut self.prefs.theme, Theme::Dark, tr("🌙 Dark"));
-                    });
-                    ui.end_row();
-                });
-
-                ui.separator();
-                ui.label(RichText::new(tr("Window")).strong());
-                grid(ui, "prefs_window", |ui| {
-                    ui.label("");
-                    ui.checkbox(&mut self.prefs.start_maximized, tr("Start maximized"));
-                    ui.end_row();
-                    ui.label(tr("Size"));
-                    ui.horizontal(|ui| {
-                        ui.add(egui::DragValue::new(&mut self.prefs.window_size[0]).range(MIN_WINDOW[0]..=7680.0));
-                        ui.label("×");
-                        ui.add(egui::DragValue::new(&mut self.prefs.window_size[1]).range(MIN_WINDOW[1]..=4320.0));
-                    });
-                    ui.end_row();
-                    ui.label(tr("Position"));
-                    ui.horizontal(|ui| {
-                        if ui.selectable_label(self.prefs.window_pos.is_none(), tr("Centered")).clicked() {
-                            self.prefs.window_pos = None;
-                        }
-                        if ui.selectable_label(self.prefs.window_pos.is_some(), tr("Custom")).clicked() && self.prefs.window_pos.is_none() {
-                            self.prefs.window_pos = Some([40.0, 40.0]);
-                        }
-                        if let Some(p) = &mut self.prefs.window_pos {
-                            ui.add(egui::DragValue::new(&mut p[0]).range(-7680.0..=7680.0).prefix("x "));
-                            ui.add(egui::DragValue::new(&mut p[1]).range(-4320.0..=4320.0).prefix("y "));
-                        }
-                    });
-                    ui.end_row();
-                    ui.label("");
-                    ui.horizontal(|ui| {
-                        if ui.button(tr("Use current size & position")).clicked() {
-                            let (inner, outer, maximized) =
-                                ui.input(|i| (i.viewport().inner_rect, i.viewport().outer_rect, i.viewport().maximized));
-                            if let Some(r) = inner {
-                                self.prefs.window_size = [r.width().round(), r.height().round()];
-                            }
-                            if let Some(r) = outer {
-                                self.prefs.window_pos = Some([r.min.x.round(), r.min.y.round()]);
-                            }
-                            if let Some(m) = maximized {
-                                self.prefs.start_maximized = m;
-                            }
-                        }
-                        if ui.button(tr("Apply now")).clicked() {
-                            apply_window(ctx, &self.prefs);
-                        }
-                    });
-                    ui.end_row();
-                });
-                hint(ui, tr("Used every time the app starts."));
-
-                ui.separator();
-                ui.label(RichText::new(tr("Installation")).strong());
-                let st = self.inst;
-                // (title, description, installed, enable label, disable label, enable, disable)
-                let rows: [(&str, &str, bool, &str, &str, Toggle, Toggle); 3] = [
-                    (
-                        "Program",
-                        "Copies the program to your user folder and adds it to the Start menu and to Settings → Apps (no admin rights needed).",
-                        st.program,
-                        "Install",
-                        "Uninstall",
-                        install::install_program,
-                        install::uninstall_program,
-                    ),
-                    (
-                        "\"Open with\" for PDF files",
-                        "Lists PDF Print Studio in Explorer's \"Open with\" menu for .pdf files.",
-                        st.open_with,
-                        "Enable",
-                        "Disable",
-                        install::register_open_with,
-                        install::unregister_open_with,
-                    ),
-                    (
-                        "Explorer context menu",
-                        "Adds \"Print with PDF Print Studio…\" and \"Quick print\" to the right-click menu of PDF files.",
-                        st.context_menu,
-                        "Enable",
-                        "Disable",
-                        install::install_context_menu,
-                        install::uninstall_context_menu,
-                    ),
-                ];
-                egui::Grid::new("prefs_install").num_columns(3).spacing([12.0, 7.0]).show(ui, |ui| {
-                    for (title, about, on, enable, disable, add, remove) in rows {
-                        ui.label(tr(title)).on_hover_text(tr(about));
-                        if on {
-                            ui.label(RichText::new("✔").color(pal().ok));
-                        } else {
-                            ui.label(RichText::new("—").color(pal().muted));
-                        }
-                        if ui.button(tr(if on { disable } else { enable })).on_hover_text(tr(about)).clicked() {
-                            action = Some(if on { remove } else { add });
-                        }
-                        ui.end_row();
-                    }
-                });
-                let location = if st.program {
-                    trf!("Installed in {}", install::install_dir().display())
-                } else {
-                    let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
-                    trf!("Not installed — running from {}", exe)
-                };
-                hint(ui, &location);
-                if ui
-                    .button(tr("Default PDF app…"))
-                    .on_hover_text(tr("Windows only lets you choose the default app yourself; this opens the Default apps settings."))
-                    .clicked()
-                {
-                    install::open_default_apps();
-                }
-
-                ui.separator();
-                ui.label(RichText::new(tr("Updates")).strong());
                 ui.horizontal(|ui| {
-                    ui.label(trf!("Version {}", update::VERSION));
+                    ui.selectable_value(&mut self.prefs_tab, PrefsTab::General, RichText::new(tr("General")).size(14.0));
+                    ui.selectable_value(&mut self.prefs_tab, PrefsTab::Installation, RichText::new(tr("Installation")).size(14.0));
+                    ui.selectable_value(&mut self.prefs_tab, PrefsTab::About, RichText::new(tr("About")).size(14.0));
+                });
+                ui.separator();
+                if self.prefs_tab == PrefsTab::General {
+                    ui.label(RichText::new(tr("Appearance")).strong());
+                    grid(ui, "prefs_look", |ui| {
+                        ui.label(tr("Language"));
+                        let system = trf!("System ({})", i18n::system_lang().native_name());
+                        let shown = match self.prefs.language {
+                            LangPref::System => system.clone(),
+                            LangPref::Fixed(l) => l.native_name().to_string(),
+                        };
+                        egui::ComboBox::from_id_salt("pref_lang").selected_text(shown).width(220.0).show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.prefs.language, LangPref::System, system)
+                                .on_hover_text(tr("Follows the Windows regional format"));
+                            for l in [Lang::English, Lang::PortugueseBr] {
+                                ui.selectable_value(&mut self.prefs.language, LangPref::Fixed(l), l.native_name());
+                            }
+                        });
+                        ui.end_row();
+                        ui.label(tr("Theme"));
+                        ui.horizontal(|ui| {
+                            ui.selectable_value(&mut self.prefs.theme, Theme::Light, tr("☀ Light"));
+                            ui.selectable_value(&mut self.prefs.theme, Theme::Dark, tr("🌙 Dark"));
+                        });
+                        ui.end_row();
+                    });
+
+                    ui.separator();
+                    ui.label(RichText::new(tr("Window")).strong());
+                    grid(ui, "prefs_window", |ui| {
+                        ui.label("");
+                        ui.checkbox(&mut self.prefs.start_maximized, tr("Start maximized"));
+                        ui.end_row();
+                        ui.label(tr("Size"));
+                        ui.horizontal(|ui| {
+                            ui.add(egui::DragValue::new(&mut self.prefs.window_size[0]).range(MIN_WINDOW[0]..=7680.0));
+                            ui.label("×");
+                            ui.add(egui::DragValue::new(&mut self.prefs.window_size[1]).range(MIN_WINDOW[1]..=4320.0));
+                        });
+                        ui.end_row();
+                        ui.label(tr("Position"));
+                        ui.horizontal(|ui| {
+                            if ui.selectable_label(self.prefs.window_pos.is_none(), tr("Centered")).clicked() {
+                                self.prefs.window_pos = None;
+                            }
+                            if ui.selectable_label(self.prefs.window_pos.is_some(), tr("Custom")).clicked() && self.prefs.window_pos.is_none() {
+                                self.prefs.window_pos = Some([40.0, 40.0]);
+                            }
+                            if let Some(p) = &mut self.prefs.window_pos {
+                                ui.add(egui::DragValue::new(&mut p[0]).range(-7680.0..=7680.0).prefix("x "));
+                                ui.add(egui::DragValue::new(&mut p[1]).range(-4320.0..=4320.0).prefix("y "));
+                            }
+                        });
+                        ui.end_row();
+                        ui.label("");
+                        ui.horizontal(|ui| {
+                            if ui.button(tr("Use current size & position")).clicked() {
+                                let (inner, outer, maximized) =
+                                    ui.input(|i| (i.viewport().inner_rect, i.viewport().outer_rect, i.viewport().maximized));
+                                if let Some(r) = inner {
+                                    self.prefs.window_size = [r.width().round(), r.height().round()];
+                                }
+                                if let Some(r) = outer {
+                                    self.prefs.window_pos = Some([r.min.x.round(), r.min.y.round()]);
+                                }
+                                if let Some(m) = maximized {
+                                    self.prefs.start_maximized = m;
+                                }
+                            }
+                            if ui.button(tr("Apply now")).clicked() {
+                                apply_window(ctx, &self.prefs);
+                            }
+                        });
+                        ui.end_row();
+                    });
+                    hint(ui, tr("Used every time the app starts."));
+                }
+                if self.prefs_tab == PrefsTab::Installation {
+                    let st = self.inst;
+                    // (title, description, installed, enable label, disable label, enable, disable)
+                    let rows: [(&str, &str, bool, &str, &str, Toggle, Toggle); 3] = [
+                        (
+                            "Program",
+                            "Copies the program to your user folder and adds it to the Start menu and to Settings → Apps (no admin rights needed).",
+                            st.program,
+                            "Install",
+                            "Uninstall",
+                            install::install_program,
+                            install::uninstall_program,
+                        ),
+                        (
+                            "\"Open with\" for PDF files",
+                            "Lists PDF Print Studio in Explorer's \"Open with\" menu for .pdf files.",
+                            st.open_with,
+                            "Enable",
+                            "Disable",
+                            install::register_open_with,
+                            install::unregister_open_with,
+                        ),
+                        (
+                            "Explorer context menu",
+                            "Adds \"Print with PDF Print Studio…\" and \"Quick print\" to the right-click menu of PDF files.",
+                            st.context_menu,
+                            "Enable",
+                            "Disable",
+                            install::install_context_menu,
+                            install::uninstall_context_menu,
+                        ),
+                    ];
+                    egui::Grid::new("prefs_install").num_columns(3).spacing([12.0, 7.0]).show(ui, |ui| {
+                        for (title, about, on, enable, disable, add, remove) in rows {
+                            ui.label(tr(title)).on_hover_text(tr(about));
+                            if on {
+                                ui.label(RichText::new("✔").color(pal().ok));
+                            } else {
+                                ui.label(RichText::new("—").color(pal().muted));
+                            }
+                            if ui.button(tr(if on { disable } else { enable })).on_hover_text(tr(about)).clicked() {
+                                action = Some(if on { remove } else { add });
+                            }
+                            ui.end_row();
+                        }
+                    });
+                    let location = if st.program {
+                        trf!("Installed in {}", install::install_dir().display())
+                    } else {
+                        let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
+                        trf!("Not installed — running from {}", exe)
+                    };
+                    hint(ui, &location);
+                    if ui
+                        .button(tr("Default PDF app…"))
+                        .on_hover_text(tr("Windows only lets you choose the default app yourself; this opens the Default apps settings."))
+                        .clicked()
+                    {
+                        install::open_default_apps();
+                    }
+                }
+                if self.prefs_tab == PrefsTab::About {
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Image::new(&self.logo).fit_to_exact_size(vec2(64.0, 64.0)));
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new("PDF Print Studio").strong().size(20.0));
+                            ui.label(trf!("Version {}", update::VERSION));
+                            ui.label(tr("Advanced PDF and comic book printing for Windows."));
+                        });
+                    });
+                    ui.add_space(8.0);
+                    ui.label(trf!("Made by {}", AUTHOR));
+                    ui.hyperlink_to(format!("🔗 github.com/{}", update::REPO), format!("https://github.com/{}", update::REPO))
+                        .on_hover_text(tr("Source code, releases and issues on GitHub"));
+                    ui.hyperlink_to(tr("Report a problem"), format!("https://github.com/{}/issues", update::REPO));
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.label(RichText::new(tr("Updates")).strong());
                     if ui.button(tr("🔄 Check for updates…")).clicked() {
                         check_updates = true;
                     }
-                });
+                }
             });
         self.prefs_open = open;
 
@@ -2499,5 +2891,201 @@ impl App {
             }
             self.prefs.save();
         }
+    }
+}
+
+// ------------------------------------------------------------ comic books
+
+impl App {
+    /// Reopen the archive when load options changed, re-arrange pages when spread options changed.
+    fn cbz_sync(&mut self, ctx: &egui::Context) {
+        if !self.is_cbz || self.loading || self.src_sizes.is_empty() {
+            return;
+        }
+        // wait until the user has finished typing or dragging a value
+        let busy = ctx.memory(|m| m.focused().is_some()) || ctx.input(|i| i.pointer.any_down());
+        if busy {
+            return;
+        }
+        if self.s.cbz.load_key() != self.cbz_load_key {
+            if let Some(p) = self.path.clone() {
+                self.open(p);
+            }
+            return;
+        }
+        let c = &self.s.cbz;
+        let key = format!("{}|{}|{}|{}|{}", c.rtl, c.split_spreads, c.keep_cover, c.cover_alone, c.spread_ratio);
+        if key != self.cbz_arrange_key {
+            let first = self.cbz_arrange_key.is_empty();
+            self.cbz_arrange_key = key;
+            let order = self.cbz_order();
+            if first {
+                // initial arrangement of a freshly opened archive: nothing to undo
+                self.order = order;
+                self.sync_order();
+            } else {
+                self.picked.clear();
+                self.set_order(order);
+            }
+        }
+    }
+
+    /// Pages of the archive with spreads split (in reading order) and an optional blank after the cover.
+    fn cbz_order(&self) -> Vec<PageSrc> {
+        let c = &self.s.cbz;
+        let mut out = Vec::new();
+        for (i, &(w, h)) in self.src_sizes.iter().enumerate() {
+            let page = PageSrc::Pdf(i, WHOLE);
+            if c.split_spreads && w / h > c.spread_ratio && !(c.keep_cover && i == 0) {
+                let [a, b] = page.split(&self.src_sizes);
+                out.extend(if c.rtl { [b, a] } else { [a, b] });
+            } else {
+                out.push(page);
+            }
+            if i == 0 && c.cover_alone {
+                out.push(PageSrc::Blank(w, h));
+            }
+        }
+        out
+    }
+
+    /// Reading direction, also applied to the n-up order and booklet binding.
+    fn set_rtl(&mut self, rtl: bool) {
+        self.s.cbz.rtl = rtl;
+        self.s.booklet_rtl = rtl;
+        self.s.nup_order = match (rtl, self.s.nup_order) {
+            (true, NupOrder::RowsLtr) => NupOrder::RowsRtl,
+            (true, NupOrder::ColsTtb) => NupOrder::ColsTtbRtl,
+            (false, NupOrder::RowsRtl) => NupOrder::RowsLtr,
+            (false, NupOrder::ColsTtbRtl) => NupOrder::ColsTtb,
+            (_, o) => o,
+        };
+    }
+
+    fn ui_cbz(&mut self, ui: &mut Ui) {
+        section(ui, "📚", tr("Comic book (CBZ)"), true, |ui| {
+            if !self.cbz_meta.is_empty() {
+                grid(ui, "cbz_meta", |ui| {
+                    for (k, v) in &self.cbz_meta {
+                        if k == "Summary" {
+                            continue;
+                        }
+                        ui.label(tr(k));
+                        ui.label(RichText::new(v).strong());
+                        ui.end_row();
+                    }
+                });
+                if let Some((_, summary)) = self.cbz_meta.iter().find(|(k, _)| k == "Summary") {
+                    egui::CollapsingHeader::new(tr("Summary")).id_salt("cbz_summary").show(ui, |ui| {
+                        ui.label(summary);
+                    });
+                }
+                ui.add_space(4.0);
+            }
+
+            ui.horizontal_wrapped(|ui| {
+                ui.label(tr("Presets:"));
+                if ui.small_button(tr("📖 Manga")).on_hover_text(tr("Right-to-left, split spreads, crisp grayscale")).clicked() {
+                    self.set_rtl(true);
+                    self.s.cbz.split_spreads = true;
+                    self.reset_color();
+                    self.s.color_mode = ColorMode::Grayscale;
+                    self.s.contrast = 12.0;
+                    self.s.sharpen = 0.6;
+                }
+                if ui.small_button(tr("🦸 Comic")).on_hover_text(tr("Left-to-right, split spreads, vivid color")).clicked() {
+                    self.set_rtl(false);
+                    self.s.cbz.split_spreads = true;
+                    self.reset_color();
+                    self.s.saturation = 108.0;
+                    self.s.contrast = 5.0;
+                }
+                if ui.small_button(tr("📰 Two pages per sheet")).on_hover_text(tr("Side by side on landscape paper, like an open book")).clicked() {
+                    self.s.layout = LayoutMode::Normal;
+                    self.s.nup_cols = 2;
+                    self.s.nup_rows = 1;
+                    self.s.cell_gap_mm = 0.0;
+                    self.s.orientation = Orientation::Landscape;
+                    self.s.scaling = Scaling::Fit;
+                    self.s.cbz.cover_alone = true;
+                    self.set_rtl(self.s.cbz.rtl);
+                }
+                if ui.small_button(tr("📚 Booklet")).on_hover_text(tr("Fold-and-staple booklet, printed two-sided")).clicked() {
+                    self.s.layout = LayoutMode::Booklet;
+                    self.s.cell_gap_mm = 0.0;
+                    self.s.duplex = if self.caps.as_ref().is_some_and(|c| c.duplex) { Duplex::ShortEdge } else { Duplex::Manual };
+                    self.set_rtl(self.s.cbz.rtl);
+                }
+                if ui.small_button(tr("🖼 Full bleed")).on_hover_text(tr("Fill the paper edge to edge, cropping the overflow")).clicked() {
+                    self.s.scaling = Scaling::Fill;
+                    self.s.margins_mm = [0.0; 4];
+                    self.s.respect_hw_margins = false;
+                }
+            });
+
+            let mut rtl = self.s.cbz.rtl;
+            grid(ui, "cbz_grid", |ui| {
+                ui.label(tr("Reading"));
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut rtl, false, tr("Left → right"));
+                    ui.selectable_value(&mut rtl, true, tr("← Right to left (manga)"));
+                });
+                ui.end_row();
+
+                ui.label(tr("Page order"));
+                combo(
+                    ui,
+                    "cbz_sort",
+                    &mut self.s.cbz.sort,
+                    &[
+                        (CbzSort::Natural, tr("By name, numbers in order (2 before 10)")),
+                        (CbzSort::Name, tr("By name, character by character")),
+                        (CbzSort::Archive, tr("As stored in the archive")),
+                    ],
+                );
+                ui.end_row();
+                ui.label("");
+                ui.checkbox(&mut self.s.cbz.reverse, tr("Reverse the image order"));
+                ui.end_row();
+
+                ui.label(tr("Skip small images"));
+                ui.add(egui::DragValue::new(&mut self.s.cbz.min_px).range(0..=4000).speed(5.0).custom_formatter(|v, _| {
+                    if v == 0.0 { tr("off").into() } else { trf!("under {} px", v) }
+                }))
+                .on_hover_text(tr("Leaves out credit pages, banners and thumbnails whose shorter side is smaller"));
+                ui.end_row();
+                ui.label(tr("Skip files named"));
+                ui.add(egui::TextEdit::singleline(&mut self.s.cbz.exclude).hint_text(tr("e.g. credits, scan, ad")).desired_width(220.0))
+                    .on_hover_text(tr("Comma-separated parts of file names to leave out"));
+                ui.end_row();
+
+                ui.label(tr("Double-page spreads"));
+                ui.checkbox(&mut self.s.cbz.split_spreads, tr("Split into two pages"));
+                ui.end_row();
+                if self.s.cbz.split_spreads {
+                    ui.label(tr("Spread when wider than"));
+                    ui.add(egui::DragValue::new(&mut self.s.cbz.spread_ratio).range(1.0..=3.0).speed(0.01).max_decimals(2).prefix("× "))
+                        .on_hover_text(tr("Width ÷ height above which an image counts as a spread"));
+                    ui.end_row();
+                    ui.label("");
+                    ui.checkbox(&mut self.s.cbz.keep_cover, tr("Never split the cover"));
+                    ui.end_row();
+                }
+                ui.label(tr("Cover"));
+                ui.checkbox(&mut self.s.cbz.cover_alone, tr("On its own (blank page after it)"))
+                    .on_hover_text(tr("Keeps facing pages together when printing two pages per sheet or as a booklet"));
+                ui.end_row();
+
+                ui.label(tr("Image resolution"));
+                ui.add(egui::DragValue::new(&mut self.s.cbz.dpi).range(36.0..=2400.0).speed(1.0).suffix(" dpi"))
+                    .on_hover_text(tr("Only matters for \"Actual size\"; the other scaling modes fit the page anyway"));
+                ui.end_row();
+            });
+            if rtl != self.s.cbz.rtl {
+                self.set_rtl(rtl);
+            }
+            let spreads = self.src_sizes.iter().filter(|(w, h)| w / h > self.s.cbz.spread_ratio).count();
+            hint(ui, &trf!("{} images · {} spreads · {} pages after arranging", self.src_sizes.len(), spreads, self.order.len()));
+        });
     }
 }

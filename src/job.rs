@@ -2,11 +2,12 @@
 
 use crate::compose::{self, StampCtx};
 use crate::layout;
-use crate::pdf::{self, PdfDoc};
+use crate::doc::Doc;
+use crate::pdf;
 use crate::printer::{self, Caps, PrintDc};
 use crate::settings::{DpiMode, Duplex, Settings};
 use crate::text::FontCache;
-use crate::worker::Renderer;
+use crate::worker::{PageSrc, Renderer};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -21,6 +22,8 @@ pub struct JobSpec {
     pub path: PathBuf,
     pub password: Option<String>,
     pub settings: Settings,
+    /// Page arrangement; `selection` indexes it.
+    pub order: Vec<PageSrc>,
     pub selection: Vec<usize>,
     pub landscape: bool,
     pub target: Target,
@@ -89,8 +92,10 @@ pub fn output_sequence(n_sides: usize, s: &Settings) -> Vec<(Option<usize>, usiz
 }
 
 fn run(spec: JobSpec, send: &dyn Fn(JobMsg), cont: &Receiver<bool>, cancel: &AtomicBool) -> Result<String, String> {
-    let doc = PdfDoc::open(&spec.path, spec.password.as_deref()).map_err(|e| crate::trf!("Cannot open PDF: {}", format!("{e:?}")))?;
+    let doc = Doc::open(&spec.path, spec.password.as_deref(), &spec.settings.cbz)
+        .map_err(|e| crate::trf!("Cannot open file: {}", format!("{e:?}")))?;
     let mut r = Renderer::new(doc, false);
+    r.set_order(spec.order.clone());
     let mut fonts = FontCache::default();
     let s = &spec.settings;
     let mut stamp = spec.stamp.clone();
@@ -199,6 +204,7 @@ mod tests {
         JobSpec {
             path: pdf.into(),
             password: None,
+            order: PageSrc::identity(5),
             selection: (0..5).collect(),
             settings: s,
             landscape: false,

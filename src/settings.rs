@@ -255,6 +255,63 @@ impl Default for Stamp {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub enum CbzSort {
+    /// "page2" before "page10".
+    Natural,
+    Name,
+    /// Order the files are stored in.
+    Archive,
+}
+
+/// Comic book (.cbz) options: how the archive becomes pages.
+#[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
+#[serde(default)]
+pub struct CbzOptions {
+    pub sort: CbzSort,
+    pub reverse: bool,
+    /// Resolution the images are assumed to have, for "actual size".
+    pub dpi: f32,
+    /// Skip images whose shorter side is below this (credits, thumbnails).
+    pub min_px: u32,
+    /// Comma-separated name parts to skip.
+    pub exclude: String,
+    /// Right-to-left reading (manga).
+    pub rtl: bool,
+    /// Cut landscape double-page spreads into two pages.
+    pub split_spreads: bool,
+    /// Never split the first page (cover).
+    pub keep_cover: bool,
+    /// Blank page after the cover so spreads stay together side by side.
+    pub cover_alone: bool,
+    /// A page counts as a spread when width / height exceeds this.
+    pub spread_ratio: f32,
+}
+
+impl Default for CbzOptions {
+    fn default() -> Self {
+        Self {
+            sort: CbzSort::Natural,
+            reverse: false,
+            dpi: 300.0,
+            min_px: 0,
+            exclude: String::new(),
+            rtl: false,
+            split_spreads: false,
+            keep_cover: true,
+            cover_alone: false,
+            spread_ratio: 1.1,
+        }
+    }
+}
+
+impl CbzOptions {
+    /// Options that change which images are loaded (they need the archive reopened).
+    pub fn load_key(&self) -> String {
+        format!("{:?}|{}|{}|{}|{}", self.sort, self.reverse, self.dpi, self.min_px, self.exclude)
+    }
+}
+
 #[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
 #[serde(default)]
 pub struct Settings {
@@ -344,6 +401,9 @@ pub struct Settings {
     pub job_name: String,
     pub print_to_file: bool,
     pub output_file: String,
+
+    // ---- comic books
+    pub cbz: CbzOptions,
 }
 
 impl Default for Settings {
@@ -435,6 +495,8 @@ impl Default for Settings {
             job_name: String::new(),
             print_to_file: false,
             output_file: String::new(),
+
+            cbz: CbzOptions::default(),
         }
     }
 }
@@ -496,7 +558,7 @@ pub fn save_preset(name: &str, s: &Settings) -> Result<(), String> {
 
 pub fn load_preset(name: &str) -> Option<Settings> {
     let data = std::fs::read_to_string(presets_dir().join(format!("{}.json", sanitize(name)))).ok()?;
-    serde_json::from_str(&data).ok()
+    serde_json::from_str(data.trim_start_matches('\u{feff}')).ok()
 }
 
 pub fn delete_preset(name: &str) {
@@ -512,5 +574,5 @@ pub fn save_last(s: &Settings) {
 
 pub fn load_last() -> Option<Settings> {
     let data = std::fs::read_to_string(data_dir().join("last.json")).ok()?;
-    serde_json::from_str(&data).ok()
+    serde_json::from_str(data.trim_start_matches('\u{feff}')).ok()
 }

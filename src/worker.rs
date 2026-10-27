@@ -3,26 +3,84 @@
 
 use crate::compose::{self, PageRenderer, StampCtx};
 use crate::layout::Sheet;
-use crate::pdf::{self, OpenError, PdfDoc};
-use crate::settings::Settings;
+use crate::doc::Doc;
+use crate::pdf::{self, OpenError};
+use crate::settings::{CbzOptions, Settings};
 use crate::text::FontCache;
-use image::{RgbImage, RgbaImage};
+use image::{Rgba, RgbImage, RgbaImage};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 
+/// The whole page as a normalised rect (x0, y0, x1, y1).
+pub const WHOLE: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
+
+/// One page of the arranged document: a region of a PDF page, or an inserted blank page.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum PageSrc {
+    /// PDF page index and the normalised part of it that forms this page.
+    Pdf(usize, [f32; 4]),
+    Blank(f32, f32),
+}
+
+impl PageSrc {
+    pub fn identity(pages: usize) -> Vec<PageSrc> {
+        (0..pages).map(|i| PageSrc::Pdf(i, WHOLE)).collect()
+    }
+
+    pub fn size_mm(&self, pdf_sizes: &[(f32, f32)]) -> (f32, f32) {
+        match *self {
+            PageSrc::Pdf(i, r) => {
+                let (w, h) = pdf_sizes.get(i).copied().unwrap_or((210.0, 297.0));
+                (w * (r[2] - r[0]), h * (r[3] - r[1]))
+            }
+            PageSrc::Blank(w, h) => (w, h),
+        }
+    }
+
+    /// The two halves of this page: left | right when it is landscape, top / bottom when portrait.
+    pub fn split(&self, pdf_sizes: &[(f32, f32)]) -> [PageSrc; 2] {
+        let (w, h) = self.size_mm(pdf_sizes);
+        match *self {
+            PageSrc::Pdf(i, [x0, y0, x1, y1]) if w > h => {
+                let xm = (x0 + x1) / 2.0;
+                [PageSrc::Pdf(i, [x0, y0, xm, y1]), PageSrc::Pdf(i, [xm, y0, x1, y1])]
+            }
+            PageSrc::Pdf(i, [x0, y0, x1, y1]) => {
+                let ym = (y0 + y1) / 2.0;
+                [PageSrc::Pdf(i, [x0, y0, x1, ym]), PageSrc::Pdf(i, [x0, ym, x1, y1])]
+            }
+            PageSrc::Blank(..) if w > h => [PageSrc::Blank(w / 2.0, h); 2],
+            PageSrc::Blank(..) => [PageSrc::Blank(w, h / 2.0); 2],
+        }
+    }
+}
+
+/// `src` (normalised within `region`) as a normalised rect of the whole page.
+fn within(region: [f32; 4], src: [f32; 4]) -> [f32; 4] {
+    let (w, h) = (region[2] - region[0], region[3] - region[1]);
+    [region[0] + src[0] * w, region[1] + src[1] * h, region[0] + src[2] * w, region[1] + src[3] * h]
+}
+
+/// Renders the pages of the arranged document; `page` indexes `order`.
 pub struct Renderer {
-    doc: PdfDoc,
+    doc: Doc,
     sizes_mm: Vec<(f32, f32)>,
+    order: Vec<PageSrc>,
     bbox: HashMap<usize, [f32; 4]>,
     cache: VecDeque<((usize, [u32; 4], u32, u32), RgbaImage)>,
     use_cache: bool,
 }
 
 impl Renderer {
-    pub fn new(doc: PdfDoc, use_cache: bool) -> Self {
+    pub fn new(doc: Doc, use_cache: bool) -> Self {
         let sizes_mm = doc.sizes_mm();
-        Self { doc, sizes_mm, bbox: HashMap::new(), cache: VecDeque::new(), use_cache }
+        let order = PageSrc::identity(sizes_mm.len());
+        Self { doc, sizes_mm, order, bbox: HashMap::new(), cache: VecDeque::new(), use_cache }
+    }
+    pub fn set_order(&mut self, order: Vec<PageSrc>) {
+        self.order = order;
+        self.bbox.clear();
     }
     pub fn sizes_mm(&self) -> &[(f32, f32)] {
         &self.sizes_mm
@@ -34,10 +92,14 @@ impl Renderer {
 
 impl PageRenderer for Renderer {
     fn page_size_mm(&self, page: usize) -> (f32, f32) {
-        self.sizes_mm.get(page).copied().unwrap_or((210.0, 297.0))
+        self.order.get(page).map_or((210.0, 297.0), |p| p.size_mm(&self.sizes_mm))
     }
 
     fn render(&mut self, page: usize, src: [f32; 4], w: u32, h: u32) -> Option<RgbaImage> {
+        let (page, src) = match *self.order.get(page)? {
+            PageSrc::Pdf(i, region) => (i, within(region, src)),
+            PageSrc::Blank(..) => return Some(RgbaImage::from_pixel(w.max(1), h.max(1), Rgba([255, 255, 255, 255]))),
+        };
         let key = (page, src.map(|v| (v * 100_000.0) as u32), w, h);
         if self.use_cache {
             if let Some((_, img)) = self.cache.iter().find(|(k, _)| *k == key) {
@@ -61,8 +123,12 @@ impl PageRenderer for Renderer {
         let (pw, ph) = self.page_size_mm(page);
         let w = 400u32;
         let h = ((w as f32 * ph / pw) as u32).max(1);
-        let mut b = [0.0, 0.0, 1.0, 1.0];
-        if let Ok(img) = self.doc.render(page, [0.0, 0.0, 1.0, 1.0], w, h) {
+        let mut b = WHOLE;
+        let pdf = match self.order.get(page) {
+            Some(&PageSrc::Pdf(i, region)) => self.doc.render(i, region, w, h).ok(),
+            _ => None,
+        };
+        if let Some(img) = pdf {
             let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0, 0);
             for (x, y, p) in img.enumerate_pixels() {
                 if p.0[3] > 10 && (p.0[0] < 235 || p.0[1] < 235 || p.0[2] < 235) {
@@ -90,12 +156,18 @@ impl PageRenderer for Renderer {
 pub struct DocInfo {
     pub path: PathBuf,
     pub sizes_mm: Vec<(f32, f32)>,
+    pub cbz: bool,
+    /// ComicInfo.xml fields of a comic book.
+    pub meta: Vec<(String, String)>,
 }
 
 pub enum Req {
-    Open { path: PathBuf, password: Option<String> },
+    Open { path: PathBuf, password: Option<String>, cbz: CbzOptions },
+    /// Thumbnails and viewer bitmaps are whole PDF pages (`page` = PDF page index).
     Thumb { page: usize, width: u32 },
     View { page: usize, width: u32 },
+    /// New page arrangement for composing sheets.
+    Arrange(Vec<PageSrc>),
     Sheet { gen: u64, sheet: Sheet, sheet_mm: (f32, f32), dpi: f32, settings: Box<Settings>, ctx: StampCtx },
 }
 
@@ -148,14 +220,15 @@ fn run(rx: Receiver<Req>, tx: Sender<Resp>, ctx: eframe::egui::Context) {
         let mut last_view = None;
         for r in pending {
             match r {
-                Req::Open { path, password } => {
+                Req::Open { path, password, cbz } => {
                     thumbs.clear();
                     last_sheet = None;
                     last_view = None;
-                    match PdfDoc::open(&path, password.as_deref()) {
+                    match Doc::open(&path, password.as_deref(), &cbz) {
                         Ok(d) => {
+                            let (is_cbz, meta) = (matches!(d, Doc::Cbz(_)), d.meta());
                             let rdr = Renderer::new(d, true);
-                            send(Resp::Opened(DocInfo { path, sizes_mm: rdr.sizes_mm().to_vec() }));
+                            send(Resp::Opened(DocInfo { path, sizes_mm: rdr.sizes_mm().to_vec(), cbz: is_cbz, meta }));
                             doc = Some(rdr);
                         }
                         Err(OpenError::NeedPassword) => {
@@ -169,6 +242,11 @@ fn run(rx: Receiver<Req>, tx: Sender<Resp>, ctx: eframe::egui::Context) {
                     }
                 }
                 Req::Thumb { page, width } => thumbs.push_back((page, width)),
+                Req::Arrange(order) => {
+                    if let Some(d) = doc.as_mut() {
+                        d.set_order(order);
+                    }
+                }
                 v @ Req::View { .. } => last_view = Some(v),
                 sh @ Req::Sheet { .. } => last_sheet = Some(sh),
             }
@@ -186,21 +264,44 @@ fn run(rx: Receiver<Req>, tx: Sender<Resp>, ctx: eframe::egui::Context) {
         }
         if let Some(Req::View { page, width }) = last_view {
             if page < d.page_count() {
-                let (pw, ph) = d.page_size_mm(page);
+                let (pw, ph) = d.sizes_mm[page];
                 let h = ((width as f32 * ph / pw) as u32).clamp(1, 16000);
-                if let Some(img) = d.render(page, [0.0, 0.0, 1.0, 1.0], width.clamp(1, 16000), h) {
+                if let Ok(img) = d.doc.render(page, WHOLE, width.clamp(1, 16000), h) {
                     send(Resp::View { page, img });
                 }
             }
         }
         if let Some((page, width)) = thumbs.pop_front() {
             if page < d.page_count() {
-                let (pw, ph) = d.page_size_mm(page);
+                let (pw, ph) = d.sizes_mm[page];
                 let h = ((width as f32 * ph / pw) as u32).clamp(1, 2000);
-                if let Ok(img) = d.doc.render(page, [0.0, 0.0, 1.0, 1.0], width, h) {
+                if let Ok(img) = d.doc.render(page, WHOLE, width, h) {
                     send(Resp::Thumb { page, img });
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_follows_orientation() {
+        let sizes = [(420.0, 297.0), (210.0, 297.0)];
+        // landscape → left | right, each A4 portrait
+        let [l, r] = PageSrc::Pdf(0, WHOLE).split(&sizes);
+        assert_eq!(l, PageSrc::Pdf(0, [0.0, 0.0, 0.5, 1.0]));
+        assert_eq!(r, PageSrc::Pdf(0, [0.5, 0.0, 1.0, 1.0]));
+        assert_eq!(l.size_mm(&sizes), (210.0, 297.0));
+        // portrait → top / bottom, each landscape
+        let [t, b] = PageSrc::Pdf(1, WHOLE).split(&sizes);
+        assert_eq!(t, PageSrc::Pdf(1, [0.0, 0.0, 1.0, 0.5]));
+        assert_eq!(b.size_mm(&sizes), (210.0, 148.5));
+        // splitting a half again works inside its region
+        let [_, q] = t.split(&sizes);
+        assert_eq!(q, PageSrc::Pdf(1, [0.5, 0.0, 1.0, 0.5]));
+        assert_eq!(within([0.5, 0.0, 1.0, 0.5], WHOLE), [0.5, 0.0, 1.0, 0.5]);
     }
 }
