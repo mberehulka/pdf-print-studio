@@ -35,6 +35,8 @@ pub fn run(files: Vec<PathBuf>, quick: bool, prefs: Prefs) -> eframe::Result<()>
         .with_inner_size(prefs.window_size)
         .with_min_inner_size(MIN_WINDOW)
         .with_maximized(prefs.start_maximized)
+        // the top bar is the title bar (see `ui_top`)
+        .with_decorations(false)
         .with_drag_and_drop(true);
     if let Some(p) = prefs.window_pos {
         viewport = viewport.with_position(p);
@@ -813,6 +815,7 @@ impl eframe::App for App {
         }
         self.ui_prefs(ctx);
         self.updater.show(ctx, self.path.as_ref());
+        resize_edges(ctx);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
@@ -882,7 +885,16 @@ impl App {
     // ------------------------------------------------------------ top bar
 
     fn ui_top(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("top").exact_height(42.0).show(ctx, |ui| {
+        let frame = egui::Frame::side_top_panel(&ctx.style()).inner_margin(egui::Margin { left: 8.0, ..Default::default() });
+        egui::TopBottomPanel::top("top").exact_height(42.0).frame(frame).show(ctx, |ui| {
+            // empty parts of the bar move the window; added first so the buttons on top get the clicks
+            let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+            let bar = ui.interact(ui.max_rect(), egui::Id::new("title_bar"), egui::Sense::click_and_drag());
+            if bar.double_clicked() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+            } else if bar.drag_started_by(egui::PointerButton::Primary) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            }
             ui.horizontal_centered(|ui| {
                 ui.add(egui::Image::new(&self.logo).fit_to_exact_size(vec2(24.0, 24.0)));
                 ui.label(RichText::new("Print Studio").strong().size(17.0).color(ACCENT));
@@ -905,6 +917,8 @@ impl App {
                     ui.label(RichText::new(trf!("{} pages", self.sizes_mm.len())).color(Color32::GRAY));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    window_buttons(ui, maximized);
+                    ui.separator();
                     if ui
                         .add(egui::Button::new(RichText::new("❓").size(16.0)).frame(false))
                         .on_hover_text(tr("Manual & template help (F1)"))
@@ -921,6 +935,69 @@ impl App {
         });
     }
 
+}
+
+/// Minimize, maximize/restore and close, right to left, in place of the Windows title bar.
+fn window_buttons(ui: &mut Ui, maximized: bool) {
+    let ctx = ui.ctx().clone();
+    let button = |ui: &mut Ui, icon: &str, hover: Color32| {
+        let size = vec2(44.0, ui.available_height());
+        let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+        if resp.hovered() {
+            ui.painter().rect_filled(rect, 0.0, hover);
+        }
+        let color = if resp.hovered() && hover == CLOSE_RED { Color32::WHITE } else { ui.visuals().text_color() };
+        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, icon, egui::FontId::proportional(14.0), color);
+        resp
+    };
+    let hover = ui.visuals().widgets.hovered.weak_bg_fill;
+    if button(ui, "🗙", CLOSE_RED).on_hover_text(tr("Close")).clicked() {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+    let (icon, tip) = if maximized { ("🗗", tr("Restore")) } else { ("🗖", tr("Maximize")) };
+    if button(ui, icon, hover).on_hover_text(tip).clicked() {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+    }
+    if button(ui, "🗕", hover).on_hover_text(tr("Minimize")).clicked() {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+    }
+}
+
+const CLOSE_RED: Color32 = Color32::from_rgb(196, 43, 28);
+
+/// A window without Windows' frame has no resize border of its own: resize from the outer few points.
+fn resize_edges(ctx: &egui::Context) {
+    use egui::viewport::ResizeDirection as D;
+    const EDGE: f32 = 5.0;
+    if ctx.input(|i| i.viewport().maximized.unwrap_or(false)) {
+        return;
+    }
+    let Some(p) = ctx.input(|i| i.pointer.hover_pos()) else { return };
+    let r = ctx.screen_rect();
+    let (l, rt, t, b) = (p.x - r.left() < EDGE, r.right() - p.x < EDGE, p.y - r.top() < EDGE, r.bottom() - p.y < EDGE);
+    let dir = match (l, rt, t, b) {
+        (true, _, true, _) => D::NorthWest,
+        (_, true, true, _) => D::NorthEast,
+        (true, _, _, true) => D::SouthWest,
+        (_, true, _, true) => D::SouthEast,
+        (true, ..) => D::West,
+        (_, true, ..) => D::East,
+        (_, _, true, _) => D::North,
+        (_, _, _, true) => D::South,
+        _ => return,
+    };
+    ctx.set_cursor_icon(match dir {
+        D::North | D::South => egui::CursorIcon::ResizeVertical,
+        D::East | D::West => egui::CursorIcon::ResizeHorizontal,
+        D::NorthWest | D::SouthEast => egui::CursorIcon::ResizeNwSe,
+        D::NorthEast | D::SouthWest => egui::CursorIcon::ResizeNeSw,
+    });
+    if ctx.input(|i| i.pointer.primary_pressed()) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(dir));
+    }
+}
+
+impl App {
     fn ui_status(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("status").exact_height(26.0).show(ctx, |ui| {
             ui.horizontal_centered(|ui| {

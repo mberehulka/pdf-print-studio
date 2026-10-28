@@ -993,4 +993,7 @@ pub static ENTRIES: &[(&str, &str)] = &[
     ("pick a page (★) for \"Picked in sidebar\"", "marca uma página (★) para \"Marcadas na barra lateral\""),
     ("Drag & drop", "Arrastar e soltar"),
     ("open a PDF", "abre um PDF"),
+    ("Restore", "Restaurar"),
+    ("Maximize", "Maximizar"),
+    ("Minimize", "Minimizar"),
 ];
