@@ -33,7 +33,7 @@ static CHAPTERS: &[Chapter] = &[
         blocks: &[
             B::P("Print Studio renders every page itself and sends finished sheets to the printer, so what you see in the Print preview is exactly what comes out."),
             B::H("Printing in four steps"),
-            B::P("1. Open a PDF: drag it onto the window, use 📂 Open…, or right-click a PDF in Explorer and choose \"Print with Print Studio…\".\n2. Pick a printer and paper in the Printer section on the right.\n3. Choose pages, layout and overlays. The preview updates live; use ◀ ▶ (or PageUp/PageDown) to step through sheet sides.\n4. Press Print (Ctrl+P)."),
+            B::P("1. Open a PDF: drag it onto the window, use 📂 Open…, or right-click a PDF in Explorer and choose \"Print with Print Studio…\".\n2. Pick a printer and paper on the 🖨 Printer tab on the right.\n3. Choose pages, layout and overlays with the other icons at the top of the right panel (hover one to see its name). The preview updates live; use ◀ ▶ (or PageUp/PageDown) to step through sheet sides.\n4. Press Print (Ctrl+P)."),
             B::Tip("Your last settings are restored automatically. Save combinations you use often as named presets (💾 Presets)."),
             B::H("Reading the preview"),
             B::P("The red tint marks the printer's non-printable area. \"Cells\" outlines where each page is placed. The ink estimate shows how much toner/ink the current side needs (≈5% is a normal text page)."),

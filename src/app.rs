@@ -164,6 +164,7 @@ pub struct App {
     prefs: Prefs,
     prefs_open: bool,
     prefs_tab: PrefsTab,
+    section: Section,
     logo: TextureHandle,
     updater: Updater,
     manual: Manual,
@@ -244,6 +245,7 @@ impl App {
             prefs,
             prefs_open: false,
             prefs_tab: PrefsTab::General,
+            section: Section::Printer,
             logo: {
                 let (rgba, w, h) = icon_rgba();
                 cc.egui_ctx.load_texture("logo", ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba), TextureOptions::LINEAR)
@@ -640,15 +642,11 @@ fn mm(ui: &mut Ui, v: &mut f32, max: f32) {
     ui.add(egui::DragValue::new(v).range(-max..=max).speed(0.25).suffix(" mm").max_decimals(1));
 }
 
-fn section(ui: &mut Ui, icon: &str, title: &str, open: bool, add: impl FnOnce(&mut Ui)) {
-    egui::CollapsingHeader::new(RichText::new(format!("{icon}  {title}")).strong().size(14.5))
-        .default_open(open)
-        .show(ui, |ui| {
-            ui.add_space(2.0);
-            add(ui);
-            ui.add_space(4.0);
-        });
-    ui.separator();
+fn section(ui: &mut Ui, icon: &str, title: &str, add: impl FnOnce(&mut Ui)) {
+    ui.label(RichText::new(format!("{icon}  {title}")).strong().size(14.5));
+    ui.add_space(4.0);
+    add(ui);
+    ui.add_space(4.0);
 }
 
 fn grid(ui: &mut Ui, id: &str, add: impl FnOnce(&mut Ui)) {
@@ -1597,29 +1595,66 @@ impl App {
 impl App {
     fn ui_settings(&mut self, ctx: &egui::Context) {
         egui::SidePanel::right("settings").resizable(true).default_width(440.0).width_range(360.0..=640.0).show(ctx, |ui| {
+            if self.section == Section::Document && self.doc_kind == DocKind::Pdf {
+                self.section = Section::Printer;
+            }
+            egui::TopBottomPanel::top("tabs").show_inside(ui, |ui| self.ui_tabs(ui));
             egui::TopBottomPanel::bottom("actions").show_inside(ui, |ui| self.ui_actions(ui));
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 ui.add_space(6.0);
-                self.ui_printer(ui);
-                match self.doc_kind {
-                    DocKind::Cbz => self.ui_cbz(ui),
-                    DocKind::Epub => self.ui_epub(ui),
-                    DocKind::Image => self.ui_image(ui),
-                    DocKind::Pdf => {}
+                match self.section {
+                    Section::Printer => self.ui_printer(ui),
+                    Section::Document => match self.doc_kind {
+                        DocKind::Cbz => self.ui_cbz(ui),
+                        DocKind::Epub => self.ui_epub(ui),
+                        DocKind::Image => self.ui_image(ui),
+                        DocKind::Pdf => {}
+                    },
+                    Section::Pages => self.ui_pages(ui),
+                    Section::Layout => self.ui_layout(ui),
+                    Section::Sizing => self.ui_sizing(ui),
+                    Section::Color => self.ui_color(ui),
+                    Section::Quality => self.ui_quality(ui),
+                    Section::Overlays => self.ui_overlays(ui),
+                    Section::Presets => self.ui_presets(ui),
                 }
-                self.ui_pages(ui);
-                self.ui_layout(ui);
-                self.ui_sizing(ui);
-                self.ui_color(ui);
-                self.ui_quality(ui);
-                self.ui_overlays(ui);
-                self.ui_presets(ui);
             });
         });
     }
 
+    /// One icon per section; the name shows on hover.
+    fn ui_tabs(&mut self, ui: &mut Ui) {
+        let doc = match self.doc_kind {
+            DocKind::Cbz => Some(("📚", tr("Comic book (CBZ)"))),
+            DocKind::Epub => Some(("📗", tr("E-book (EPUB)"))),
+            DocKind::Image => Some(("🖼", tr("Pictures"))),
+            DocKind::Pdf => None,
+        };
+        let tabs = [
+            Some((Section::Printer, "🖨", tr("Printer"))),
+            doc.map(|(icon, name)| (Section::Document, icon, name)),
+            Some((Section::Pages, "📑", tr("Pages"))),
+            Some((Section::Layout, "▦", tr("Layout"))),
+            Some((Section::Sizing, "⤢", tr("Size & position"))),
+            Some((Section::Color, "🎨", tr("Color & image"))),
+            Some((Section::Quality, "✨", tr("Rendering & anti-aliasing"))),
+            Some((Section::Overlays, "🏷", tr("Watermark, headers & stamps"))),
+            Some((Section::Presets, "💾", tr("Presets"))),
+        ];
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            for (section, icon, name) in tabs.into_iter().flatten() {
+                let b = egui::Button::new(RichText::new(icon).size(18.0)).selected(self.section == section).min_size(egui::vec2(36.0, 30.0));
+                if ui.add(b).on_hover_text(name).clicked() {
+                    self.section = section;
+                }
+            }
+        });
+        ui.add_space(2.0);
+    }
+
     fn ui_printer(&mut self, ui: &mut Ui) {
-        section(ui, "🖨", tr("Printer"), true, |ui| {
+        section(ui, "🖨", tr("Printer"), |ui| {
             let mut chosen = None;
             ui.horizontal(|ui| {
                 egui::ComboBox::from_id_salt("printer")
@@ -1798,7 +1833,7 @@ impl App {
 
     fn ui_pages(&mut self, ui: &mut Ui) {
         let n = self.sizes_mm.len();
-        section(ui, "📑", tr("Pages"), true, |ui| {
+        section(ui, "📑", tr("Pages"), |ui| {
             ui.radio_value(&mut self.s.range_mode, RangeMode::All, trf!("All pages (1-{})", n));
             ui.radio_value(&mut self.s.range_mode, RangeMode::Current, trf!("Current page ({})", self.current + 1));
             ui.horizontal(|ui| {
@@ -1883,7 +1918,7 @@ impl App {
     }
 
     fn ui_layout(&mut self, ui: &mut Ui) {
-        section(ui, "▦", tr("Layout"), true, |ui| {
+        section(ui, "▦", tr("Layout"), |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.selectable_value(&mut self.s.layout, LayoutMode::Normal, tr("▦ Pages per sheet"));
                 ui.selectable_value(&mut self.s.layout, LayoutMode::Booklet, tr("📖 Booklet"));
@@ -2039,7 +2074,7 @@ impl App {
     }
 
     fn ui_sizing(&mut self, ui: &mut Ui) {
-        section(ui, "⤢", tr("Size & position"), true, |ui| {
+        section(ui, "⤢", tr("Size & position"), |ui| {
             grid(ui, "size_grid", |ui| {
                 ui.label(tr("Scaling"));
                 combo(
@@ -2123,7 +2158,7 @@ impl App {
     }
 
     fn ui_color(&mut self, ui: &mut Ui) {
-        section(ui, "🎨", tr("Color & image"), false, |ui| {
+        section(ui, "🎨", tr("Color & image"), |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label(tr("Presets:"));
                 if ui.small_button(tr("Original")).clicked() {
@@ -2213,7 +2248,7 @@ impl App {
     }
 
     fn ui_quality(&mut self, ui: &mut Ui) {
-        section(ui, "✨", tr("Rendering & anti-aliasing"), false, |ui| {
+        section(ui, "✨", tr("Rendering & anti-aliasing"), |ui| {
             grid(ui, "quality_grid", |ui| {
                 ui.label(tr("Raster resolution"));
                 ui.horizontal(|ui| {
@@ -2299,7 +2334,7 @@ impl App {
     fn ui_overlays(&mut self, ui: &mut Ui) {
         let vars = self.preview_vars();
         let mut help = None;
-        section(ui, "🏷", tr("Watermark, headers & stamps"), false, |ui| {
+        section(ui, "🏷", tr("Watermark, headers & stamps"), |ui| {
             ui.horizontal(|ui| {
                 if ui.button(tr("❓ Template help")).on_hover_text(tr("Variables, conditions, loops and examples (F1)")).clicked() {
                     help = Some(manual::CH_TEMPLATES);
@@ -2599,7 +2634,7 @@ impl App {
     }
 
     fn ui_presets(&mut self, ui: &mut Ui) {
-        section(ui, "💾", tr("Presets"), false, |ui| {
+        section(ui, "💾", tr("Presets"), |ui| {
             let mut load = None;
             ui.horizontal_wrapped(|ui| {
                 if self.presets.is_empty() {
@@ -2781,6 +2816,21 @@ fn apply_window(ctx: &egui::Context, p: &Prefs) {
 type Toggle = fn() -> Result<String, String>;
 
 pub const AUTHOR: &str = "Muriel Guedes Pucci Berehulka";
+
+/// The tabs of the settings panel.
+#[derive(Clone, Copy, PartialEq)]
+enum Section {
+    Printer,
+    /// Comic book, e-book or picture options, depending on what is open.
+    Document,
+    Pages,
+    Layout,
+    Sizing,
+    Color,
+    Quality,
+    Overlays,
+    Presets,
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum PrefsTab {
@@ -3088,7 +3138,7 @@ impl App {
     }
 
     fn ui_cbz(&mut self, ui: &mut Ui) {
-        section(ui, "📚", tr("Comic book (CBZ)"), true, |ui| {
+        section(ui, "📚", tr("Comic book (CBZ)"), |ui| {
             if !self.doc_meta.is_empty() {
                 grid(ui, "cbz_meta", |ui| {
                     for (k, v) in &self.doc_meta {
@@ -3219,7 +3269,7 @@ impl App {
 
 impl App {
     fn ui_epub(&mut self, ui: &mut Ui) {
-        section(ui, "📗", tr("E-book (EPUB)"), true, |ui| {
+        section(ui, "📗", tr("E-book (EPUB)"), |ui| {
             if !self.doc_meta.is_empty() {
                 grid(ui, "epub_meta", |ui| {
                     for (k, v) in &self.doc_meta {
@@ -3442,7 +3492,7 @@ impl App {
     }
 
     fn ui_image(&mut self, ui: &mut Ui) {
-        section(ui, "🖼", tr("Pictures"), true, |ui| {
+        section(ui, "🖼", tr("Pictures"), |ui| {
             let skipped = self.doc_meta.iter().find(|(k, _)| k == "Skipped").map(|(_, v)| v.clone());
             if !self.doc_meta.is_empty() {
                 grid(ui, "img_meta", |ui| {
