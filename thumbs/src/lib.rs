@@ -401,7 +401,7 @@ mod tests {
     #[test]
     fn pdf_first_page() {
         // uses the demo file when present
-        let Ok(data) = std::fs::read(r"C:\Users\Public\Documents\PdfPrintStudioDemo\Annual-Report.pdf") else { return };
+        let Ok(data) = std::fs::read(r"C:\Users\Public\Documents\PrintStudioDemo\Annual-Report.pdf") else { return };
         unsafe {
             let _ = RoInitialize(RO_INIT_MULTITHREADED);
         }

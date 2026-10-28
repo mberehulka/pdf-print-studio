@@ -217,16 +217,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pdfprintstudio-thumbs"
-version = "0.1.0"
-dependencies = [
- "image",
- "windows",
- "windows-core",
- "zip",
-]
-
-[[package]]
 name = "png"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -237,6 +227,16 @@ dependencies = [
  "fdeflate",
  "flate2",
  "miniz_oxide 0.8.9",
+]
+
+[[package]]
+name = "print-studio-thumbs"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "windows",
+ "windows-core",
+ "zip",
 ]
 
 [[package]]

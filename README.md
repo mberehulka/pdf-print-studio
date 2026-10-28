@@ -2,21 +2,21 @@
   <img src="assets/icon.png" width="96" alt="">
 </p>
 
-<h1 align="center">PDF Print Studio</h1>
+<h1 align="center">Print Studio</h1>
 
 <p align="center">
   Print PDFs, comic books, e-books and photos exactly the way you want, on Windows.
 </p>
 
 <p align="center">
-  <a href="https://github.com/mberehulka/pdf-print-studio/releases/latest/download/pdfprintstudio.exe"><img src="https://img.shields.io/badge/Download_for_Windows-pdfprintstudio.exe-1e62d6?style=for-the-badge&logo=windows&logoColor=white" alt="Download for Windows" height="36"></a>
+  <a href="https://github.com/mberehulka/print-studio/releases/latest/download/print-studio.exe"><img src="https://img.shields.io/badge/Download_for_Windows-print-studio.exe-1e62d6?style=for-the-badge&logo=windows&logoColor=white" alt="Download for Windows" height="36"></a>
   <br>
-  <a href="https://github.com/mberehulka/pdf-print-studio/releases/latest"><img src="https://img.shields.io/github/v/release/mberehulka/pdf-print-studio?label=latest&color=54aaff" alt="Latest version"></a>
+  <a href="https://github.com/mberehulka/print-studio/releases/latest"><img src="https://img.shields.io/github/v/release/mberehulka/print-studio?label=latest&color=54aaff" alt="Latest version"></a>
 </p>
 
 ![Print preview with two pages per sheet, header, footer and a DRAFT watermark](docs/screenshots/preview.png)
 
-PDF Print Studio gives you a live preview of the printed sheet before you print, and the preview always matches
+Print Studio gives you a live preview of the printed sheet before you print, and the preview always matches
 what comes out of the printer. It's a single `.exe` and needs no installer, admin rights or extra DLLs.
 
 ## Features
@@ -32,7 +32,7 @@ ComicInfo metadata and has presets for manga, comics, two-up and booklets.
 
 ![A comic book with its CBZ panel: metadata, presets and spread handling](docs/screenshots/comic.png)
 
-**E-books (EPUB).** E-books have no fixed pages, so PDF Print Studio typesets them into real book pages. You choose
+**E-books (EPUB).** E-books have no fixed pages, so Print Studio typesets them into real book pages. You choose
 the page size (A5, A6, 6×9 in paperback…), margins, font, text size, line spacing, indents and justification.
 Chapters can start on a new or right-hand page, and you can add a cover page, a generated table of contents,
 running heads with the chapter title and page numbers. Presets cover paperback, pocket book, large print and
@@ -73,24 +73,24 @@ from your Windows settings), and a default window size and position.
 
 ## Install
 
-1. [Download `pdfprintstudio.exe`](https://github.com/mberehulka/pdf-print-studio/releases/latest/download/pdfprintstudio.exe) and run it.
+1. [Download `print-studio.exe`](https://github.com/mberehulka/print-studio/releases/latest/download/print-studio.exe) and run it.
 2. Open **⚙ Settings → Installation**. With one click each, you can:
    - install the program (Start menu entry, and an uninstall entry in Windows Settings → Apps),
    - add it to Explorer's **Open with** menu for PDF, CBZ, EPUB and picture files (page thumbnails in Explorer keep working),
-   - add **Print with PDF Print Studio…** and **Quick print** to the right-click menu, and **Send to → PDF Print Studio**
+   - add **Print with Print Studio…** and **Quick print** to the right-click menu, and **Send to → Print Studio**
      for printing several selected pictures together,
    - show **Explorer thumbnails** for PDF, CBZ and EPUB files: the first page, the comic's first page or the book cover
      instead of an icon.
 
 Updates come from GitHub. To get the newest version, go to **⚙ Settings → About → Check for updates**.
 
-Command line: `pdfprintstudio file.pdf`, `pdfprintstudio photo1.jpg photo2.jpg` or a folder, `--quick file.pdf` (prints with
+Command line: `print-studio file.pdf`, `print-studio photo1.jpg photo2.jpg` or a folder, `--quick file.pdf` (prints with
 the last settings), `--install`, `--uninstall`.
 
 ## Build from source
 
 ```powershell
-cargo build --release     # target\release\pdfprintstudio.exe
+cargo build --release     # target\release\print-studio.exe
 cargo test
 ```
 

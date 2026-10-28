@@ -14,8 +14,8 @@ fn main() {
 
     let mut res = winresource::WindowsResource::new();
     res.set_icon("assets/icon.ico");
-    res.set("ProductName", "PDF Print Studio");
-    res.set("FileDescription", "PDF Print Studio");
+    res.set("ProductName", "Print Studio");
+    res.set("FileDescription", "Print Studio");
     res.set("LegalCopyright", "Muriel Guedes Pucci Berehulka");
     res.compile().expect("compiling Windows resources");
 
@@ -33,6 +33,6 @@ fn main() {
         .status()
         .expect("running cargo for the thumbnail provider");
     assert!(status.success(), "building the thumbnail provider (thumbs/) failed");
-    std::fs::copy(target.join("release").join("pdfprintstudio_thumbs.dll"), out.join("thumbs.dll"))
+    std::fs::copy(target.join("release").join("print_studio_thumbs.dll"), out.join("thumbs.dll"))
         .expect("copying the thumbnail provider");
 }

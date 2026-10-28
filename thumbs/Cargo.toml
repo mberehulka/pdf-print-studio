@@ -1,15 +1,15 @@
 [package]
-name = "pdfprintstudio-thumbs"
+name = "print-studio-thumbs"
 version = "0.1.0"
 edition = "2021"
-description = "Explorer thumbnail provider for PDF, CBZ and EPUB files (embedded in PDF Print Studio)"
+description = "Explorer thumbnail provider for PDF, CBZ and EPUB files (embedded in Print Studio)"
 publish = false
 
 # Built by the main crate's build script and embedded in the exe; not part of its workspace.
 [workspace]
 
 [lib]
-name = "pdfprintstudio_thumbs"
+name = "print_studio_thumbs"
 crate-type = ["cdylib"]
 
 [dependencies]

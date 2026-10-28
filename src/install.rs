@@ -13,8 +13,8 @@ use winreg::RegKey;
 const EXTS: [&str; 3] = ["pdf", "cbz", "epub"];
 /// Picture types that get "Open with" and the context menu; Windows keeps drawing their thumbnails.
 const IMAGE_EXTS: [&str; 11] = ["jpg", "jpeg", "png", "gif", "bmp", "tif", "tiff", "webp", "heic", "avif", "jfif"];
-const VERB_MAIN: &str = "PdfPrintStudio";
-const VERB_QUICK: &str = "PdfPrintStudioQuick";
+const VERB_MAIN: &str = "PrintStudio";
+const VERB_QUICK: &str = "PrintStudioQuick";
 /// Shell extensions Explorer uses for thumbnails and the preview pane.
 const SHELLEX: [&str; 2] = [THUMBNAIL_HANDLER, "{8895b1c6-b41f-4c1c-a562-0d564250836f}"];
 const THUMBNAIL_HANDLER: &str = "{e357fccd-a995-4576-b01f-234630154e96}";
@@ -22,10 +22,10 @@ const THUMBNAIL_HANDLER: &str = "{e357fccd-a995-4576-b01f-234630154e96}";
 const THUMB_CLSID: &str = "{D56D8E8B-1EAC-48CE-822F-4244DA3EB9C7}";
 /// The provider DLL, built by build.rs.
 const THUMBS_DLL: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/thumbs.dll"));
-const APP_KEY: &str = r"Software\Classes\Applications\pdfprintstudio.exe";
-const CAPS_KEY: &str = r"Software\PdfPrintStudio\Capabilities";
-const UNINSTALL_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\PdfPrintStudio";
-const APP_NAME: &str = "PDF Print Studio";
+const APP_KEY: &str = r"Software\Classes\Applications\print-studio.exe";
+const CAPS_KEY: &str = r"Software\PrintStudio\Capabilities";
+const UNINSTALL_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\PrintStudio";
+const APP_NAME: &str = "Print Studio";
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[link(name = "user32")]
@@ -56,26 +56,26 @@ pub fn install_dir() -> PathBuf {
     std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
-        .join("PdfPrintStudio")
+        .join("PrintStudio")
 }
 
 pub fn installed_exe() -> PathBuf {
-    install_dir().join("pdfprintstudio.exe")
+    install_dir().join("print-studio.exe")
 }
 
 fn start_menu_link() -> PathBuf {
     std::env::var_os("APPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
-        .join(r"Microsoft\Windows\Start Menu\Programs\PDF Print Studio.lnk")
+        .join(r"Microsoft\Windows\Start Menu\Programs\Print Studio.lnk")
 }
 
-/// "Send to → PDF Print Studio" passes every selected file to one window.
+/// "Send to → Print Studio" passes every selected file to one window.
 fn send_to_link() -> PathBuf {
     std::env::var_os("APPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
-        .join(r"Microsoft\Windows\SendTo\PDF Print Studio.lnk")
+        .join(r"Microsoft\Windows\SendTo\Print Studio.lnk")
 }
 
 /// Every type with "Open with" and context-menu entries.
@@ -88,7 +88,7 @@ fn shell_key(ext: &str) -> String {
 }
 
 fn prog_id(ext: &str) -> String {
-    format!("PdfPrintStudio.{ext}")
+    format!("PrintStudio.{ext}")
 }
 
 fn hkcu() -> RegKey {
@@ -230,7 +230,7 @@ fn existing_shellex(ext: &str, shellex: &str) -> Option<String> {
     if let Ok(k) = root.open_subkey(format!(r".{ext}\OpenWithProgids")) {
         prog_ids.extend(k.enum_values().flatten().map(|(name, _)| name));
     }
-    keys.extend(prog_ids.iter().filter(|p| !p.starts_with("PdfPrintStudio.")).map(|p| format!(r"{p}\ShellEx\{shellex}")));
+    keys.extend(prog_ids.iter().filter(|p| !p.starts_with("PrintStudio.")).map(|p| format!(r"{p}\ShellEx\{shellex}")));
     keys.iter().find_map(|k| {
         root.open_subkey(k).ok()?.get_value::<String, _>("").ok().filter(|v| !v.is_empty() && !v.eq_ignore_ascii_case(THUMB_CLSID))
     })
@@ -292,7 +292,7 @@ pub fn unregister_open_with() -> Result<String, String> {
         }
     }
     let _ = h.delete_subkey_all(APP_KEY);
-    let _ = h.delete_subkey_all(r"Software\PdfPrintStudio");
+    let _ = h.delete_subkey_all(r"Software\PrintStudio");
     if let Ok(k) = h.open_subkey_with_flags(r"Software\RegisteredApplications", winreg::enums::KEY_WRITE) {
         let _ = k.delete_value(APP_NAME);
     }
@@ -308,7 +308,7 @@ pub fn open_default_apps() {
 // ---------------------------------------------------------------- Explorer thumbnails
 
 fn thumbs_dll() -> PathBuf {
-    install_dir().join("pdfprintstudio_thumbs.dll")
+    install_dir().join("print_studio_thumbs.dll")
 }
 
 /// Put the embedded DLL next to the installed exe. A loaded DLL cannot be overwritten, but it can be
@@ -320,7 +320,7 @@ fn write_thumbs_dll() -> Result<(), String> {
     }
     if path.exists() && std::fs::remove_file(&path).is_err() {
         let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-        std::fs::rename(&path, install_dir().join(format!("pdfprintstudio_thumbs.{stamp}.old"))).map_err(|e| e.to_string())?;
+        std::fs::rename(&path, install_dir().join(format!("print_studio_thumbs.{stamp}.old"))).map_err(|e| e.to_string())?;
     }
     std::fs::write(&path, THUMBS_DLL).map_err(|e| e.to_string())
 }
@@ -340,7 +340,7 @@ pub fn install_thumbnails() -> Result<String, String> {
     ensure_installed()?;
     write_thumbs_dll()?;
     let clsid = format!(r"Software\Classes\CLSID\{THUMB_CLSID}");
-    set(&create(&clsid)?, "", "PDF Print Studio thumbnails")?;
+    set(&create(&clsid)?, "", "Print Studio thumbnails")?;
     let server = create(&format!(r"{clsid}\InprocServer32"))?;
     set(&server, "", &thumbs_dll().display().to_string())?;
     set(&server, "ThreadingModel", "Apartment")?;
@@ -387,7 +387,7 @@ pub fn refresh_thumbnails() {
 pub fn install_context_menu() -> Result<String, String> {
     let t = ensure_installed()?;
     let verbs = [
-        (VERB_MAIN, tr("Print with PDF Print Studio…"), format!("\"{t}\" \"%1\"")),
+        (VERB_MAIN, tr("Print with Print Studio…"), format!("\"{t}\" \"%1\"")),
         (VERB_QUICK, tr("Quick print (last settings)"), format!("\"{t}\" --quick \"%1\"")),
     ];
     for ext in all_exts() {
@@ -418,6 +418,74 @@ pub fn uninstall_context_menu() -> Result<String, String> {
 
 // ---------------------------------------------------------------- command line
 
+// ---------------------------------------------------------------- rename from "PDF Print Studio"
+
+const LEGACY_ID: &str = "PdfPrintStudio";
+const LEGACY_NAME: &str = "PDF Print Studio";
+
+fn legacy_dir(var: &str) -> PathBuf {
+    std::env::var_os(var).map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join(LEGACY_ID)
+}
+
+/// Up to 0.4.0 the app was called "PDF Print Studio". Moves its settings over and replaces an old
+/// installation (reached by the self-update, which swaps the exe in the old folder) with the new one.
+pub fn migrate_legacy() {
+    let data = crate::settings::data_dir();
+    let old_data = legacy_dir("APPDATA");
+    if old_data.exists() && !data.exists() {
+        let _ = std::fs::rename(&old_data, &data);
+    }
+
+    let h = hkcu();
+    let old_uninstall = format!(r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{LEGACY_ID}");
+    if !has_key(&old_uninstall) {
+        return;
+    }
+    let old_prog_id = |ext: &str| format!("{LEGACY_ID}.{ext}");
+    let had_open_with = has_key(&format!(r"Software\Classes\{}\shell\open\command", old_prog_id("pdf")));
+    let had_context_menu = has_key(&format!(r"{}\{LEGACY_ID}\command", shell_key("pdf")));
+    let had_thumbnails = status().thumbnails; // same CLSID, re-pointed at the new DLL below
+
+    for ext in all_exts() {
+        let _ = h.delete_subkey_all(format!(r"Software\Classes\{}", old_prog_id(ext)));
+        if let Ok(k) = h.open_subkey_with_flags(format!(r"Software\Classes\.{ext}\OpenWithProgids"), winreg::enums::KEY_WRITE) {
+            let _ = k.delete_value(old_prog_id(ext));
+        }
+        for verb in [LEGACY_ID.to_string(), format!("{LEGACY_ID}Quick")] {
+            let _ = h.delete_subkey_all(format!(r"{}\{verb}", shell_key(ext)));
+        }
+    }
+    let _ = h.delete_subkey_all(r"Software\Classes\Applications\pdfprintstudio.exe");
+    let _ = h.delete_subkey_all(format!(r"Software\{LEGACY_ID}"));
+    if let Ok(k) = h.open_subkey_with_flags(r"Software\RegisteredApplications", winreg::enums::KEY_WRITE) {
+        let _ = k.delete_value(LEGACY_NAME);
+    }
+    let _ = h.delete_subkey_all(&old_uninstall);
+    for folder in [r"Microsoft\Windows\Start Menu\Programs", r"Microsoft\Windows\SendTo"] {
+        if let Some(base) = std::env::var_os("APPDATA") {
+            let _ = std::fs::remove_file(PathBuf::from(base).join(folder).join(format!("{LEGACY_NAME}.lnk")));
+        }
+    }
+
+    if install_program().is_ok() {
+        if had_open_with {
+            let _ = register_open_with();
+        }
+        if had_context_menu {
+            let _ = install_context_menu();
+        }
+        if had_thumbnails {
+            let _ = install_thumbnails();
+        }
+    }
+    notify_shell();
+
+    // the old exe may be the one running, and Explorer may hold the old thumbnail DLL: retry for a while
+    let dir = legacy_dir("LOCALAPPDATA").display().to_string();
+    let script = format!("/C for /L %i in (1,1,300) do @(rmdir /s /q \"{dir}\" 2>nul & if not exist \"{dir}\" (exit) else ping -n 2 127.0.0.1 >nul)");
+    let _ = Command::new("cmd").raw_arg(script).creation_flags(CREATE_NO_WINDOW).spawn();
+}
+
 /// `--install`: program, "Open with" and context menu in one go.
 pub fn install() -> Result<String, String> {
     install_program()?;
@@ -425,7 +493,7 @@ pub fn install() -> Result<String, String> {
     install_context_menu()?;
     install_thumbnails()?;
     Ok(trf!(
-        "PDF Print Studio is installed.\n\nRight-click any PDF or picture → \"Print with PDF Print Studio…\" or \"Open with\" (on Windows 11 under \"Show more options\"). To print several pictures together, select them and use \"Send to → PDF Print Studio\".\n\nProgram location:\n{}",
+        "Print Studio is installed.\n\nRight-click any PDF or picture → \"Print with Print Studio…\" or \"Open with\" (on Windows 11 under \"Show more options\"). To print several pictures together, select them and use \"Send to → Print Studio\".\n\nProgram location:\n{}",
         installed_exe().display()
     ))
 }
@@ -433,5 +501,5 @@ pub fn install() -> Result<String, String> {
 /// `--uninstall` (also what "Apps & features" runs).
 pub fn uninstall() -> Result<String, String> {
     uninstall_program()?;
-    Ok(tr("PDF Print Studio was removed.").into())
+    Ok(tr("Print Studio was removed.").into())
 }

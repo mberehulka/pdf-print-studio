@@ -12,9 +12,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// GitHub "owner/repository" whose releases carry the Windows binary.
-pub const REPO: &str = "mberehulka/pdf-print-studio";
+pub const REPO: &str = "mberehulka/print-studio";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-const USER_AGENT: &str = concat!("pdf-print-studio/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("print-studio/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Deserialize)]
 struct GhRelease {
@@ -101,7 +101,7 @@ fn fetch_latest() -> Result<Release, String> {
         .assets
         .iter()
         .filter(|a| a.name.to_lowercase().ends_with(".exe"))
-        .max_by_key(|a| a.name.eq_ignore_ascii_case("pdfprintstudio.exe"))
+        .max_by_key(|a| a.name.eq_ignore_ascii_case("print-studio.exe"))
         .map(|a| (a.browser_download_url.clone(), a.size));
     Ok(Release {
         version: r.tag_name.trim_start_matches(['v', 'V']).to_string(),

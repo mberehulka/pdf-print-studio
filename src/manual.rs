@@ -31,14 +31,14 @@ static CHAPTERS: &[Chapter] = &[
     Chapter {
         title: "🚀 Quick start",
         blocks: &[
-            B::P("PDF Print Studio renders every page itself and sends finished sheets to the printer, so what you see in the Print preview is exactly what comes out."),
+            B::P("Print Studio renders every page itself and sends finished sheets to the printer, so what you see in the Print preview is exactly what comes out."),
             B::H("Printing in four steps"),
-            B::P("1. Open a PDF: drag it onto the window, use 📂 Open…, or right-click a PDF in Explorer and choose \"Print with PDF Print Studio…\".\n2. Pick a printer and paper in the Printer section on the right.\n3. Choose pages, layout and overlays. The preview updates live; use ◀ ▶ (or PageUp/PageDown) to step through sheet sides.\n4. Press Print (Ctrl+P)."),
+            B::P("1. Open a PDF: drag it onto the window, use 📂 Open…, or right-click a PDF in Explorer and choose \"Print with Print Studio…\".\n2. Pick a printer and paper in the Printer section on the right.\n3. Choose pages, layout and overlays. The preview updates live; use ◀ ▶ (or PageUp/PageDown) to step through sheet sides.\n4. Press Print (Ctrl+P)."),
             B::Tip("Your last settings are restored automatically. Save combinations you use often as named presets (💾 Presets)."),
             B::H("Reading the preview"),
             B::P("The red tint marks the printer's non-printable area. \"Cells\" outlines where each page is placed. The ink estimate shows how much toner/ink the current side needs (≈5% is a normal text page)."),
             B::H("Quick print"),
-            B::P("\"Quick print (last settings)\" in the Explorer menu, or `pdfprintstudio --quick file.pdf`, prints immediately with the settings you used last."),
+            B::P("\"Quick print (last settings)\" in the Explorer menu, or `print-studio --quick file.pdf`, prints immediately with the settings you used last."),
         ],
     },
     Chapter {
@@ -106,14 +106,14 @@ static CHAPTERS: &[Chapter] = &[
             B::H("Copies & output"),
             B::P("Copies can be collated (1-2-3, 1-2-3) or not (1-1, 2-2, 3-3). Print to file writes the printer's output to disk. Export PNG renders every sheet side as an image."),
             B::H("Command line"),
-            B::Code("pdfprintstudio file.pdf\npdfprintstudio photo1.jpg photo2.jpg\npdfprintstudio C:\\Photos\\Holiday\npdfprintstudio --quick file.pdf\npdfprintstudio --install\npdfprintstudio --uninstall"),
+            B::Code("print-studio file.pdf\nprint-studio photo1.jpg photo2.jpg\nprint-studio C:\\Photos\\Holiday\nprint-studio --quick file.pdf\nprint-studio --install\nprint-studio --uninstall"),
         ],
     },
     Chapter {
         title: "🖼 Photos & pictures",
         blocks: &[
             B::P("Open JPEG, PNG, GIF, BMP, TIFF, WebP, ICO, TGA, QOI and more – one picture, several at once (Ctrl+click in 📂 Open…, or drop them on the window) or a whole folder (🗀 Folder…). Each picture becomes a page, so everything else – layouts, overlays, colour – works as for PDFs. HEIC, AVIF and camera RAW files open when the matching extension from the Microsoft Store is installed."),
-            B::Tip("In Explorer, select several pictures and use Send to → PDF Print Studio to print them together."),
+            B::Tip("In Explorer, select several pictures and use Send to → Print Studio to print them together."),
             B::H("Print size"),
             B::Table(&[
                 ("Picture's own size", "pixels ÷ resolution; the resolution comes from the file or the value you set"),
@@ -356,7 +356,7 @@ impl Manual {
 
     pub fn show(&mut self, ctx: &egui::Context, vars: &Vars) {
         let mut open = self.open;
-        egui::Window::new(tr("❓ PDF Print Studio – Manual"))
+        egui::Window::new(tr("❓ Print Studio – Manual"))
             .open(&mut open)
             .default_size([900.0, 640.0])
             .min_width(640.0)

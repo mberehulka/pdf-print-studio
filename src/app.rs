@@ -31,7 +31,7 @@ const THUMB_W: u32 = 180;
 
 pub fn run(files: Vec<PathBuf>, quick: bool, prefs: Prefs) -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
-        .with_title("PDF Print Studio")
+        .with_title("Print Studio")
         .with_inner_size(prefs.window_size)
         .with_min_inner_size(MIN_WINDOW)
         .with_maximized(prefs.start_maximized)
@@ -43,7 +43,7 @@ pub fn run(files: Vec<PathBuf>, quick: bool, prefs: Prefs) -> eframe::Result<()>
     viewport = viewport.with_icon(std::sync::Arc::new(egui::IconData { rgba, width, height }));
     let opts = eframe::NativeOptions { viewport, centered: prefs.window_pos.is_none(), ..Default::default() };
     eframe::run_native(
-        "PDF Print Studio",
+        "Print Studio",
         opts,
         Box::new(move |cc| Ok(Box::new(App::new(cc, files, quick, prefs)))),
     )
@@ -887,7 +887,7 @@ impl App {
         egui::TopBottomPanel::top("top").exact_height(42.0).show(ctx, |ui| {
             ui.horizontal_centered(|ui| {
                 ui.add(egui::Image::new(&self.logo).fit_to_exact_size(vec2(24.0, 24.0)));
-                ui.label(RichText::new("PDF Print Studio").strong().size(17.0).color(ACCENT));
+                ui.label(RichText::new("Print Studio").strong().size(17.0).color(ACCENT));
                 ui.separator();
                 if ui.button(tr("📂 Open…")).on_hover_text(tr("Ctrl+click or Shift+click to choose several pictures")).clicked() {
                     if let Some(p) = pick_files() {
@@ -2902,7 +2902,7 @@ impl App {
                         ),
                         (
                             "\"Open with\" for PDF files",
-                            "Lists PDF Print Studio in Explorer's \"Open with\" menu for .pdf files.",
+                            "Lists Print Studio in Explorer's \"Open with\" menu for .pdf files.",
                             st.open_with,
                             "Enable",
                             "Disable",
@@ -2911,7 +2911,7 @@ impl App {
                         ),
                         (
                             "Explorer context menu",
-                            "Adds \"Print with PDF Print Studio…\" and \"Quick print\" to the right-click menu of PDF files.",
+                            "Adds \"Print with Print Studio…\" and \"Quick print\" to the right-click menu of PDF files.",
                             st.context_menu,
                             "Enable",
                             "Disable",
@@ -2961,7 +2961,7 @@ impl App {
                     ui.horizontal(|ui| {
                         ui.add(egui::Image::new(&self.logo).fit_to_exact_size(vec2(64.0, 64.0)));
                         ui.vertical(|ui| {
-                            ui.label(RichText::new("PDF Print Studio").strong().size(20.0));
+                            ui.label(RichText::new("Print Studio").strong().size(20.0));
                             ui.label(trf!("Version {}", update::VERSION));
                             ui.label(tr("Advanced PDF and comic book printing for Windows."));
                         });

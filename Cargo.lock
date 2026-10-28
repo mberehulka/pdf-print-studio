@@ -1942,24 +1942,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pdf-print-studio"
-version = "0.4.0"
-dependencies = [
- "ab_glyph",
- "eframe",
- "image",
- "raw-window-handle",
- "rfd",
- "serde",
- "serde_json",
- "ureq",
- "windows",
- "winreg",
- "winresource",
- "zip",
-]
-
-[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2069,6 +2051,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
 dependencies = [
  "zerocopy",
+]
+
+[[package]]
+name = "print-studio"
+version = "0.5.0"
+dependencies = [
+ "ab_glyph",
+ "eframe",
+ "image",
+ "raw-window-handle",
+ "rfd",
+ "serde",
+ "serde_json",
+ "ureq",
+ "windows",
+ "winreg",
+ "winresource",
+ "zip",
 ]
 
 [[package]]

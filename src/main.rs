@@ -25,6 +25,7 @@ mod worker;
 use std::path::PathBuf;
 
 fn main() {
+    install::migrate_legacy();
     let prefs = prefs::Prefs::load();
     prefs.apply_lang();
     update::cleanup();
@@ -49,8 +50,8 @@ fn main() {
             "--quick" => quick = true,
             "--help" | "-h" | "/?" => {
                 install::message(
-                    "PDF Print Studio",
-                    i18n::tr("Usage:\n  pdfprintstudio [file.pdf | pictures… | folder]\n  pdfprintstudio --quick file.pdf   (print with last settings)\n  pdfprintstudio --install            (install, add \"Open with\" and context menu)\n  pdfprintstudio --uninstall          (remove everything again)"),
+                    "Print Studio",
+                    i18n::tr("Usage:\n  print-studio [file.pdf | pictures… | folder]\n  print-studio --quick file.pdf   (print with last settings)\n  print-studio --install            (install, add \"Open with\" and context menu)\n  print-studio --uninstall          (remove everything again)"),
                     false,
                 );
                 return;
@@ -59,6 +60,6 @@ fn main() {
         }
     }
     if let Err(e) = app::run(files, quick, prefs) {
-        install::message("PDF Print Studio", &trf!("Failed to start UI: {}", e), true);
+        install::message("Print Studio", &trf!("Failed to start UI: {}", e), true);
     }
 }

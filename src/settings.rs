@@ -719,7 +719,7 @@ pub fn data_dir() -> PathBuf {
     let base = std::env::var_os("APPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);
-    base.join("PdfPrintStudio")
+    base.join("PrintStudio")
 }
 
 fn presets_dir() -> PathBuf {
