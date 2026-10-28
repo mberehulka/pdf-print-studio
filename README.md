@@ -14,7 +14,7 @@
   <a href="https://github.com/mberehulka/print-studio/releases/latest"><img src="https://img.shields.io/github/v/release/mberehulka/print-studio?label=latest&color=54aaff" alt="Latest version"></a>
 </p>
 
-![Print preview with two pages per sheet, header, footer and a DRAFT watermark](docs/screenshots/preview.png)
+![Print preview with two pages per sheet, header, footer and a DRAFT watermark](docs/screenshots/preview.png?v=0.5.1)
 
 Print Studio gives you a live preview of the printed sheet before you print, and the preview always matches
 what comes out of the printer. It's a single `.exe` and needs no installer, admin rights or extra DLLs.
@@ -24,13 +24,13 @@ what comes out of the printer. It's a single `.exe` and needs no installer, admi
 **Layouts.** Put several pages on one sheet (any grid up to 16×16). Print a **booklet** that you fold and staple.
 Spread a **poster** across several sheets, or repeat one page across the sheet for labels and business cards.
 
-![Booklet layout: pages reordered so the folded stack reads like a book](docs/screenshots/booklet.png)
+![Booklet layout: pages reordered so the folded stack reads like a book](docs/screenshots/booklet.png?v=0.5.1)
 
 **Comic books (CBZ).** Open `.cbz` archives directly. You can read right-to-left for manga, split double-page
 spreads into two pages, keep the cover on its own page, and skip credit pages or banners. The app also shows the
 ComicInfo metadata and has presets for manga, comics, two-up and booklets.
 
-![A comic book with its CBZ panel: metadata, presets and spread handling](docs/screenshots/comic.png)
+![A comic book with its CBZ panel: metadata, presets and spread handling](docs/screenshots/comic.png?v=0.5.1)
 
 **E-books (EPUB).** E-books have no fixed pages, so Print Studio typesets them into real book pages. You choose
 the page size (A5, A6, 6×9 in paperback…), margins, font, text size, line spacing, indents and justification.
@@ -38,7 +38,7 @@ Chapters can start on a new or right-hand page, and you can add a cover page, a 
 running heads with the chapter title and page numbers. Presets cover paperback, pocket book, large print and
 paper-saving; then print it as a booklet or two pages per sheet.
 
-![An e-book typeset into A5 pages, two per sheet, with running head and page numbers](docs/screenshots/ebook.png)
+![An e-book typeset into A5 pages, two per sheet, with running head and page numbers](docs/screenshots/ebook.png?v=0.5.1)
 
 **Photos and pictures.** Open JPEG, PNG, GIF, BMP, TIFF, WebP, ICO, TGA, QOI and more, plus HEIC, AVIF and
 camera RAW when the Windows extension for them is installed. Open one picture, several at once or a whole folder,
@@ -69,7 +69,7 @@ printers without a duplex unit. You also get copies, collation, presets, PNG exp
 **Your way.** Light or dark theme, rulers in millimetres, English or **Português (Brasil)** (picked automatically
 from your Windows settings), and a default window size and position.
 
-![Dark theme in Portuguese, four pages per sheet](docs/screenshots/dark-pt-br.png)
+![Dark theme in Portuguese, four pages per sheet](docs/screenshots/dark-pt-br.png?v=0.5.1)
 
 ## Install
 
