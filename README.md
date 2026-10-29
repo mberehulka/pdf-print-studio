@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/mberehulka/print-studio/releases/latest/download/print-studio.exe"><img src="https://img.shields.io/badge/Download_for_Windows-print-studio.exe-1e62d6?style=for-the-badge&logo=windows&logoColor=white" alt="Download for Windows" height="36"></a>
+  <a href="https://github.com/mberehulka/print-studio/releases/latest/download/print-studio.exe"><img src="https://img.shields.io/badge/Download_for_Windows-print--studio.exe-1e62d6?style=for-the-badge&logo=windows&logoColor=white" alt="Download for Windows" height="36"></a>
   <br>
   <a href="https://github.com/mberehulka/print-studio/releases/latest"><img src="https://img.shields.io/github/v/release/mberehulka/print-studio?label=latest&color=54aaff" alt="Latest version"></a>
 </p>
